@@ -1,26 +1,62 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #12110f;
+  --bg-2: #1b1916;
+  --ink: #f3efe6;
+  --muted: #b8b0a2;
+  --line: #2c2924;
+  --accent: #c6a15b;
+  --gold: #c6a15b;
+  --accent-2: #c6a15b;
+  --background: #12110f;
+  --foreground: #f3efe6;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-white: #f3efe6;
+  --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display), ui-serif, Georgia, serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--ink);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.01em;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+@keyframes portrait-sway {
+  from {
+    transform: scale(1.08) translate3d(2.4%, 0.8%, 0) rotate(1.1deg);
+  }
+  to {
+    transform: scale(1.1) translate3d(-2.4%, -1%, 0) rotate(-1.1deg);
+  }
+}
+
+.portrait-sway {
+  animation: portrait-sway 8s ease-in-out infinite alternate;
+  transform-origin: 50% 72%;
 }
