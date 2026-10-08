@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { AccountMenu } from "@/components/account-menu";
-import { useSession } from "@/components/auth-gate";
 
 const NAV = [
   {
@@ -51,6 +50,7 @@ const NAV = [
 function navActive(href: string, pathname: string) {
   if (href === "/create") return pathname.startsWith("/create");
   if (href === "/chat") return pathname.startsWith("/chat") || pathname.startsWith("/date");
+  if (href === "/premium") return pathname.startsWith("/premium") || pathname.startsWith("/packs");
   if (href === "/#explore") return false;
   return pathname === "/";
 }
@@ -76,7 +76,6 @@ export function AppHeader({ center }: { center?: ReactNode }) {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { openLogin } = useSession();
   const pathname = usePathname();
   const [railOpen, setRailOpen] = useState(false);
 
@@ -126,18 +125,17 @@ export function AppShell({ children }: { children: ReactNode }) {
               );
             })}
           </nav>
-          <button
-            type="button"
+          <Link
+            href="/premium"
             aria-label="Premium"
             title={railOpen ? undefined : "Premium"}
             className={`${railOpen ? "justify-start gap-3 px-3" : "justify-center"} mt-auto flex h-11 w-full items-center rounded-2xl bg-[var(--gold)] !text-[#12110F]`}
-            onClick={openLogin}
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="currentColor">
               <path d="M6.2 10.2 12 4.8l5.8 5.4-2.2 8.4H8.4z" />
             </svg>
             {railOpen ? <span className="text-sm font-medium">Premium</span> : null}
-          </button>
+          </Link>
         </aside>
 
         <div className="min-w-0 flex-1 pb-16 lg:pb-0">{children}</div>
@@ -162,16 +160,15 @@ export function AppShell({ children }: { children: ReactNode }) {
             </Link>
           );
         })}
-        <button
-          type="button"
+        <Link
+          href="/premium"
           className="flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] text-[var(--gold)]"
-          onClick={openLogin}
         >
           <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
             <path d="M6.2 10.2 12 4.8l5.8 5.4-2.2 8.4H8.4z" />
           </svg>
           Premium
-        </button>
+        </Link>
       </nav>
     </div>
   );

@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSession } from "@/components/auth-gate";
+import { loadProfile } from "@/lib/profile";
 
 export function AccountMenu() {
   const { session, signOut, openLogin, openSignup } = useSession();
@@ -44,7 +46,9 @@ export function AccountMenu() {
     );
   }
 
-  const initial = session.display.trim().charAt(0).toUpperCase() || "U";
+  const profile = session ? loadProfile(session.detail) : null;
+  const label = profile?.name || session.display;
+  const initial = label.trim().charAt(0).toUpperCase() || "U";
 
   return (
     <div ref={root} className="relative">
@@ -52,14 +56,20 @@ export function AccountMenu() {
         type="button"
         aria-label="Account menu"
         aria-expanded={open}
-        className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/10 text-sm font-medium"
+        className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-white/10 text-sm font-medium"
         onClick={() => setOpen((value) => !value)}
       >
-        {initial}
+        {profile?.photo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={profile.photo} alt="" className="h-full w-full object-cover" />
+        ) : (
+          initial
+        )}
       </button>
       {open ? (
         <div className="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-2xl border border-white/10 bg-[#1B1916] py-2">
           <MenuList
+            onNavigate={() => setOpen(false)}
             onLogout={() => {
               setOpen(false);
               signOut();
@@ -71,19 +81,19 @@ export function AccountMenu() {
   );
 }
 
-function MenuList({ onLogout }: { onLogout: () => void }) {
+function MenuList({
+  onLogout,
+  onNavigate,
+}: {
+  onLogout: () => void;
+  onNavigate: () => void;
+}) {
   return (
     <>
       <MenuRow
-        label="Subscription"
-        icon={
-          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-            <path d="M12 3.2 20 8v8l-8 4.8L4 16V8z" />
-          </svg>
-        }
-      />
-      <MenuRow
-        label="Credits"
+        href="/packs"
+        onClick={onNavigate}
+        label="Packs"
         icon={
           <svg viewBox="0 0 24 24" className="h-5 w-5 text-[var(--gold)]" fill="currentColor">
             <path d="m12 3 2.1 6.4H21l-5.4 3.9 2.1 6.4L12 16.8 6.3 19.7l2.1-6.4L3 9.4h6.9z" />
@@ -91,11 +101,23 @@ function MenuList({ onLogout }: { onLogout: () => void }) {
         }
       />
       <MenuRow
-        label="Settings"
+        href="/premium"
+        onClick={onNavigate}
+        label="Premium"
+        icon={
+          <svg viewBox="0 0 24 24" className="h-5 w-5 text-[var(--gold)]" fill="currentColor">
+            <path d="M12 3.2 20 8v8l-8 4.8L4 16V8z" />
+          </svg>
+        }
+      />
+      <MenuRow
+        href="/profile"
+        onClick={onNavigate}
+        label="Profile"
         icon={
           <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.6">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M12 4.5v1.6M12 17.9v1.6M4.5 12h1.6M17.9 12h1.6M6.6 6.6l1.1 1.1M16.3 16.3l1.1 1.1M17.4 6.6l-1.1 1.1M7.7 16.3l-1.1 1.1" />
+            <circle cx="12" cy="8" r="3" />
+            <path d="M5.5 19c1.4-3 4-4.5 6.5-4.5S17.1 16 18.5 19" />
           </svg>
         }
       />
@@ -116,20 +138,34 @@ function MenuList({ onLogout }: { onLogout: () => void }) {
 function MenuRow({
   label,
   icon,
+  href,
   onClick,
 }: {
   label: string;
   icon: ReactNode;
+  href?: string;
   onClick?: () => void;
 }) {
-  return (
-    <button
-      type="button"
-      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-[var(--ink)] hover:bg-white/5"
-      onClick={onClick}
-    >
+  const className =
+    "flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-[var(--ink)] hover:bg-white/5";
+  const inner = (
+    <>
       <span className="flex h-5 w-5 items-center justify-center text-[var(--ink)]">{icon}</span>
       {label}
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link href={href} className={className} onClick={onClick}>
+        {inner}
+      </Link>
+    );
+  }
+
+  return (
+    <button type="button" className={className} onClick={onClick}>
+      {inner}
     </button>
   );
 }

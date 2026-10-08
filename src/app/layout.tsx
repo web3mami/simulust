@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Fraunces, Outfit } from "next/font/google";
 import { AgeGate } from "@/components/age-gate";
 import { AuthProvider } from "@/components/auth-gate";
+import { PrivyApp } from "@/components/privy-app";
 import "./globals.css";
 
 const display = Fraunces({
@@ -25,9 +26,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${display.variable} ${sans.variable} h-full`}>
       <body className="min-h-full font-sans">
-        <AgeGate>
-          <AuthProvider>{children}</AuthProvider>
-        </AgeGate>
+        <PrivyApp>
+          <AgeGate>
+            <AuthProvider>{children}</AuthProvider>
+          </AgeGate>
+        </PrivyApp>
       </body>
     </html>
   );

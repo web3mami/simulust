@@ -1,10 +1,12 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { usePrivy } from "@privy-io/react-auth";
 import { LoginScreen } from "@/components/login-screen";
 import {
   clearSession,
-  readSession,
+  sessionFromPrivyUser,
   writeSession,
   type Session,
 } from "@/lib/session";
@@ -29,17 +31,32 @@ export function useSession() {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const router = useRouter();
+  const { ready, authenticated, user, logout } = usePrivy();
   const [loginOpen, setLoginOpen] = useState(false);
   const [authIntent, setAuthIntent] = useState<AuthIntent>("login");
 
+  const session =
+    ready && authenticated && user ? sessionFromPrivyUser(user) : null;
+
   useEffect(() => {
-    setSession(readSession());
-  }, []);
+    if (!ready) return;
+    const oauthReturn = new URLSearchParams(window.location.search).has(
+      "privy_oauth_code",
+    );
+    if (session) {
+      writeSession(session);
+      setLoginOpen(false);
+      if (oauthReturn) router.replace("/profile");
+      return;
+    }
+    if (oauthReturn) return;
+    clearSession();
+  }, [ready, session, router]);
 
   function signOut() {
     clearSession();
-    setSession(null);
+    void logout();
   }
 
   return (
@@ -73,11 +90,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             <LoginScreen
               embedded
               intent={authIntent}
-              onSignedIn={(next) => {
-                writeSession(next);
-                setSession(next);
-                setLoginOpen(false);
-              }}
+              onSignedIn={() => setLoginOpen(false)}
             />
           </div>
         </div>
