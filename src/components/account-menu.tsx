@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSession } from "@/components/auth-gate";
+import { PremiumIcon } from "@/components/premium-icon";
 import { loadProfile } from "@/lib/profile";
 
 export function AccountMenu() {
@@ -105,9 +106,7 @@ function MenuList({
         onClick={onNavigate}
         label="Premium"
         icon={
-          <svg viewBox="0 0 24 24" className="h-5 w-5 text-[var(--gold)]" fill="currentColor">
-            <path d="M12 3.2 20 8v8l-8 4.8L4 16V8z" />
-          </svg>
+          <PremiumIcon className="h-5 w-5 text-[var(--gold)]" />
         }
       />
       <MenuRow

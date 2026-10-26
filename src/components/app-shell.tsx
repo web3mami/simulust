@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { AccountMenu } from "@/components/account-menu";
+import { PremiumIcon } from "@/components/premium-icon";
 
 const NAV = [
   {
@@ -131,27 +132,53 @@ export function AppShell({ children }: { children: ReactNode }) {
             title={railOpen ? undefined : "Premium"}
             className={`${railOpen ? "justify-start gap-3 px-3" : "justify-center"} mt-auto flex h-11 w-full items-center rounded-2xl bg-[var(--gold)] !text-[#12110F]`}
           >
-            <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="currentColor">
-              <path d="M6.2 10.2 12 4.8l5.8 5.4-2.2 8.4H8.4z" />
-            </svg>
+            <PremiumIcon />
             {railOpen ? <span className="text-sm font-medium">Premium</span> : null}
           </Link>
         </aside>
 
-        <div className="min-w-0 flex-1 pb-16 lg:pb-0">{children}</div>
+        <div className="min-w-0 flex-1 pb-20 lg:pb-0">{children}</div>
       </div>
 
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--line)] bg-[var(--bg)]/95 backdrop-blur lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 flex items-end border-t border-[var(--line)] bg-[var(--bg)]/95 px-1 pb-2 pt-1.5 backdrop-blur lg:hidden"
         aria-label="Mobile"
       >
-        {NAV.map((item) => {
+        {NAV.filter((item) => item.href !== "/create").slice(0, 2).map((item) => {
           const on = navActive(item.href, pathname);
           return (
             <Link
               key={item.label}
               href={item.href}
-              className={`flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] ${
+              className={`flex flex-1 flex-col items-center gap-1 py-2 text-[11px] ${
+                on ? "text-[var(--gold)]" : "text-[var(--muted)]"
+              }`}
+            >
+              {item.icon}
+              {item.label}
+            </Link>
+          );
+        })}
+        <Link
+          href="/create"
+          aria-label="Create"
+          className="create-dock relative -mt-7 mb-0.5 flex w-[4.5rem] shrink-0 flex-col items-center"
+        >
+          <span className="create-dock-ring" aria-hidden />
+          <span className="relative z-10 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--gold)] !text-[#12110F] shadow-[0_8px_20px_rgba(198,161,91,0.35)]">
+            <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 6v12M6 12h12" />
+            </svg>
+          </span>
+          <span className="mt-1 text-[11px] text-[var(--gold)]">Create</span>
+        </Link>
+        {NAV.filter((item) => item.href === "/chat").map((item) => {
+          const on = navActive(item.href, pathname);
+          return (
+            <Link
+              key={item.label}
+              href={item.href}
+              className={`flex flex-1 flex-col items-center gap-1 py-2 text-[11px] ${
                 on ? "text-[var(--gold)]" : "text-[var(--muted)]"
               }`}
             >
@@ -162,11 +189,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         })}
         <Link
           href="/premium"
-          className="flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] text-[var(--gold)]"
+          className="flex flex-1 flex-col items-center gap-1 py-2 text-[11px] text-[var(--gold)]"
         >
-          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-            <path d="M6.2 10.2 12 4.8l5.8 5.4-2.2 8.4H8.4z" />
-          </svg>
+          <PremiumIcon />
           Premium
         </Link>
       </nav>

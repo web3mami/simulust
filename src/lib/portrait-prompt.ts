@@ -4,6 +4,8 @@ export type PortraitRequest = {
   ethnicity: string;
   age: number;
   hair: string;
+  hairStyle: string;
+  eyeColor: string;
   body: string;
   breast?: string;
   personality: string;
@@ -14,6 +16,21 @@ export type PortraitRequest = {
 
 const ETHNICITIES = ["Caucasian", "Asian", "Latina", "Latino", "Black"];
 const HAIR = ["Blonde", "Brunette", "Black", "Red"];
+const HAIR_STYLES = [
+  "Straight",
+  "Wavy",
+  "Curly",
+  "Coily",
+  "Long",
+  "Short",
+  "Ponytail",
+  "Bun",
+  "Medium",
+  "Buzz",
+  "Undercut",
+  "Slicked back",
+];
+const EYES = ["Brown", "Hazel", "Green", "Blue", "Gray", "Amber"];
 const GIRL_BODIES = ["Petite", "Athletic", "Curvy", "Thick"];
 const GUY_BODIES = ["Slim", "Athletic", "Muscular", "Soft"];
 const BREASTS = ["Small", "Medium", "Large"];
@@ -65,6 +82,8 @@ export function portraitRequest(input: unknown): PortraitRequest | null {
   if (!section || !style || !Number.isInteger(age) || age < 18 || age > 80) return null;
   if (typeof raw.ethnicity !== "string" || !ETHNICITIES.includes(raw.ethnicity)) return null;
   if (typeof raw.hair !== "string" || !HAIR.includes(raw.hair)) return null;
+  if (typeof raw.hairStyle !== "string" || !HAIR_STYLES.includes(raw.hairStyle)) return null;
+  if (typeof raw.eyeColor !== "string" || !EYES.includes(raw.eyeColor)) return null;
   const bodies = section === "girls" ? GIRL_BODIES : GUY_BODIES;
   if (typeof raw.body !== "string" || !bodies.includes(raw.body)) return null;
   if (typeof raw.personality !== "string" || !PERSONALITIES.includes(raw.personality)) return null;
@@ -85,6 +104,8 @@ export function portraitRequest(input: unknown): PortraitRequest | null {
     ethnicity: raw.ethnicity,
     age,
     hair: raw.hair,
+    hairStyle: raw.hairStyle,
+    eyeColor: raw.eyeColor,
     body: raw.body,
     breast,
     personality: raw.personality,
@@ -119,7 +140,8 @@ export function portraitPrompt(choice: PortraitRequest): string {
     return [
       "anime screencap, 2d drawn frame, thick black outlines, flat colors",
       `one ${ageLine} ${choice.ethnicity} anime ${person}`,
-      `${hair} hair`,
+      `${hair} ${choice.hairStyle.toLowerCase()} hair`,
+      `${choice.eyeColor.toLowerCase()} eyes`,
       animeBody,
       outfit,
       ANIME_MOOD[choice.personality] ?? "calm expression",
@@ -132,7 +154,8 @@ export function portraitPrompt(choice: PortraitRequest): string {
   return [
     "photorealistic photograph, natural skin, real camera photo",
     `one ${ageLine} ${choice.ethnicity} ${person}`,
-    `${hair} hair`,
+    `${hair} ${choice.hairStyle.toLowerCase()} hair`,
+    `${choice.eyeColor.toLowerCase()} eyes`,
     figure,
     outfit,
     expression,

@@ -40,6 +40,37 @@ const HAIR = [
   { id: "Red", src: "/creator/hair-red.jpg" },
 ];
 
+const GIRL_HAIR_STYLES = [
+  { id: "Straight", src: "/creator/hair-style-girl-straight.jpg", anime: "/creator/hair-style-girl-anime-straight.jpg" },
+  { id: "Wavy", src: "/creator/hair-style-girl-wavy.jpg", anime: "/creator/hair-style-girl-anime-wavy.jpg" },
+  { id: "Curly", src: "/creator/hair-style-girl-curly.jpg", anime: "/creator/hair-style-girl-anime-curly.jpg" },
+  { id: "Coily", src: "/creator/hair-style-girl-coily.jpg", anime: "/creator/hair-style-girl-anime-coily.jpg" },
+  { id: "Long", src: "/creator/hair-style-girl-long.jpg", anime: "/creator/hair-style-girl-anime-long.jpg" },
+  { id: "Short", src: "/creator/hair-style-girl-short.jpg", anime: "/creator/hair-style-girl-anime-short.jpg" },
+  { id: "Ponytail", src: "/creator/hair-style-girl-ponytail.jpg", anime: "/creator/hair-style-girl-anime-ponytail.jpg" },
+  { id: "Bun", src: "/creator/hair-style-girl-bun.jpg", anime: "/creator/hair-style-girl-anime-bun.jpg" },
+];
+
+const GUY_HAIR_STYLES = [
+  { id: "Short", src: "/creator/hair-style-guy-short.jpg", anime: "/creator/hair-style-guy-anime-short.jpg" },
+  { id: "Medium", src: "/creator/hair-style-guy-medium.jpg", anime: "/creator/hair-style-guy-anime-medium.jpg" },
+  { id: "Long", src: "/creator/hair-style-guy-long.jpg", anime: "/creator/hair-style-guy-anime-long.jpg" },
+  { id: "Wavy", src: "/creator/hair-style-guy-wavy.jpg", anime: "/creator/hair-style-guy-anime-wavy.jpg" },
+  { id: "Curly", src: "/creator/hair-style-guy-curly.jpg", anime: "/creator/hair-style-guy-anime-curly.jpg" },
+  { id: "Buzz", src: "/creator/hair-style-guy-buzz.jpg", anime: "/creator/hair-style-guy-anime-buzz.jpg" },
+  { id: "Undercut", src: "/creator/hair-style-guy-undercut.jpg", anime: "/creator/hair-style-guy-anime-undercut.jpg" },
+  { id: "Slicked back", src: "/creator/hair-style-guy-slicked.jpg", anime: "/creator/hair-style-guy-anime-slicked.jpg" },
+];
+
+const EYE_COLORS = [
+  { id: "Brown", src: "/creator/eye-brown.jpg" },
+  { id: "Hazel", src: "/creator/eye-hazel.jpg" },
+  { id: "Green", src: "/creator/eye-green.jpg" },
+  { id: "Blue", src: "/creator/eye-blue.jpg" },
+  { id: "Gray", src: "/creator/eye-gray.jpg" },
+  { id: "Amber", src: "/creator/eye-amber.jpg" },
+];
+
 const GUY_HAIR: Record<Style, Record<string, string>> = {
   realistic: {
     Blonde: "/creator/hair-guy-real-blonde.jpg",
@@ -62,7 +93,12 @@ const BODIES = [
   { id: "Thick", src: "/creator/body-thick.jpg" },
 ];
 
-const GUY_BODIES = ["Slim", "Athletic", "Muscular", "Soft"];
+const GUY_BODIES = [
+  { id: "Slim", src: "/creator/body-guy-slim.jpg" },
+  { id: "Athletic", src: "/creator/body-guy-athletic.jpg" },
+  { id: "Muscular", src: "/creator/body-guy-muscular.jpg" },
+  { id: "Soft", src: "/creator/body-guy-soft.jpg" },
+];
 
 const BREASTS = [
   { id: "Small", src: "/creator/breast-small.jpg" },
@@ -121,6 +157,38 @@ const HAND: Record<Section, Record<Style, string[]>> = {
   },
 };
 
+function EyeColorCard({
+  src,
+  label,
+  selected,
+  onClick,
+}: {
+  src: string;
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative overflow-hidden rounded-xl border bg-[#171717] text-left ${
+        selected ? "border-white" : "border-white/10"
+      }`}
+    >
+      <div className="flex h-[4.75rem] items-center justify-center px-2 pt-2 sm:h-24">
+        <img src={src} alt="" className="max-h-14 max-w-[3.5rem] object-contain sm:max-h-16 sm:max-w-16" />
+      </div>
+      <span className="block px-1 pb-2.5 text-center text-sm font-semibold">{label}</span>
+      {selected ? (
+        <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-black">
+          ✓
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
 function PictureCard({
   src,
   frames,
@@ -178,7 +246,12 @@ function PictureCard({
         selected ? "border-white" : "border-white/10"
       }`}
     >
-      <img ref={photo} src={poses[0] ?? src} alt="" className="aspect-[3/4] w-full object-cover" />
+      <img
+        ref={photo}
+        src={poses[0] ?? src}
+        alt=""
+        className="aspect-[3/4] w-full object-cover"
+      />
       <span className="absolute inset-x-0 bottom-0 bg-black/55 px-3 py-3 text-center text-lg font-semibold">
         {label}
       </span>
@@ -194,13 +267,16 @@ function PictureCard({
 export default function CreatePage() {
   const router = useRouter();
   const [section, setSection] = useState<Section>("girls");
-  const [style, setStyle] = useState<Style>("realistic");
+  const [style, setStyle] = useState<Style | "">("");
   const [step, setStep] = useState<Step>("style");
-  const [ethnicity, setEthnicity] = useState("Caucasian");
+  const [ethnicity, setEthnicity] = useState("");
+  const [eyeColor, setEyeColor] = useState("");
   const [age, setAge] = useState(24);
-  const [hair, setHair] = useState("Blonde");
-  const [body, setBody] = useState("Curvy");
-  const [breast, setBreast] = useState("Medium");
+  const [hairStyle, setHairStyle] = useState("");
+  const [hair, setHair] = useState("");
+  const [body, setBody] = useState("");
+  const [breast, setBreast] = useState("");
+  const [stepError, setStepError] = useState<string | null>(null);
   const [name, setName] = useState(GIRL_NAMES[0]);
   const [personality, setPersonality] = useState(PERSONALITIES[0]);
   const [role, setRole] = useState(GIRL_ROLES[0]);
@@ -221,24 +297,30 @@ export default function CreatePage() {
     [section],
   );
   const index = steps.indexOf(step);
+  const look: Style = style || "realistic";
   const ethnicities = section === "girls" ? GIRL_ETHNICITY : GUY_ETHNICITY;
+  const hairStyles = section === "girls" ? GIRL_HAIR_STYLES : GUY_HAIR_STYLES;
   const roles = section === "girls" ? GIRL_ROLES : GUY_ROLES;
 
   function ethnicitySrc(id: string) {
     const row = ethnicities.find((item) => item.id === id) ?? ethnicities[0];
-    return style === "realistic" ? row.realistic : row.src;
+    return look === "realistic" ? row.realistic : row.src;
   }
 
   function goSection(next: Section) {
     setSection(next);
-    setStyle("realistic");
-    setEthnicity(next === "girls" ? "Caucasian" : "Caucasian");
-    setBody(next === "girls" ? "Curvy" : "Athletic");
+    setStyle("");
+    setEthnicity("");
+    setEyeColor("");
+    setHair("");
+    setHairStyle("");
+    setBody("");
+    setBreast("");
     setRole(next === "girls" ? GIRL_ROLES[0] : GUY_ROLES[0]);
     setName(next === "girls" ? GIRL_NAMES[0] : GUY_NAMES[0]);
-    setHair(next === "girls" ? "Blonde" : "Black");
     setPortrait(null);
     setPortraitError(null);
+    setStepError(null);
     setStep("style");
   }
 
@@ -256,12 +338,37 @@ export default function CreatePage() {
     });
   }
 
+  function stepReady(current: Step) {
+    if (current === "style") return Boolean(style);
+    if (current === "ethnicity") return Boolean(ethnicity && eyeColor);
+    if (current === "hair") return Boolean(hair && hairStyle);
+    if (current === "body") return Boolean(body);
+    if (current === "breast") return Boolean(breast);
+    if (current === "train") return Boolean(name.trim() && kinks.length);
+    return true;
+  }
+
   function next() {
+    if (!stepReady(step)) {
+      setStepError("You have to select all options.");
+      return;
+    }
+    setStepError(null);
     const following = steps[index + 1];
     if (following) setStep(following);
   }
 
+  function tryGenerate() {
+    if (!stepReady("train")) {
+      setStepError("You have to select all options.");
+      return;
+    }
+    setStepError(null);
+    void drawPortrait();
+  }
+
   function back() {
+    setStepError(null);
     const previous = steps[index - 1];
     if (previous) setStep(previous);
   }
@@ -280,6 +387,8 @@ export default function CreatePage() {
         ethnicity,
         age,
         hair,
+        hairStyle,
+        eyeColor,
         body,
         breast: section === "girls" ? breast : undefined,
         personality,
@@ -323,7 +432,7 @@ export default function CreatePage() {
 
   function finish() {
     if (!portrait) return;
-    const lane: Lane = style === "anime" ? "anime" : section === "guys" ? "guys" : "girls";
+    const lane: Lane = look === "anime" ? "anime" : section === "guys" ? "guys" : "girls";
     const person: Character = {
       id: crypto.randomUUID(),
       name: name.trim() || "Unnamed",
@@ -336,9 +445,11 @@ export default function CreatePage() {
       line: `${name.trim()} is ${personality.toLowerCase()}, works as a ${occupation.toLowerCase()}, and likes ${kinks.join(", ") || "being direct"}. ${voice}.`,
       color: "#3a3348",
       lane,
-      tags: [body, personality, hair],
+      tags: [body, personality, hair, hairStyle, eyeColor],
       image: portrait,
       hair,
+      hairStyle,
+      eyeColor,
       breast: section === "girls" ? breast : undefined,
       personality,
       occupation,
@@ -371,12 +482,6 @@ export default function CreatePage() {
           />
         </div>
 
-        {step !== "style" ? (
-          <button type="button" className="mb-4 text-sm text-white/70" onClick={back}>
-            Back
-          </button>
-        ) : null}
-
         {step === "style" ? (
           <section>
             <h1 className="text-center text-4xl font-semibold">
@@ -406,11 +511,12 @@ export default function CreatePage() {
                   selected={style === card.id}
                   onClick={() => {
                     setStyle(card.id);
-                    next();
+                    setStepError(null);
                   }}
                 />
               ))}
             </div>
+            <StepNav error={stepError} onNext={next} />
           </section>
         ) : null}
 
@@ -421,10 +527,13 @@ export default function CreatePage() {
               {ethnicities.map((item) => (
                 <PictureCard
                   key={item.id}
-                  src={style === "realistic" ? item.realistic : item.src}
+                  src={ethnicitySrc(item.id)}
                   label={item.id}
                   selected={ethnicity === item.id}
-                  onClick={() => setEthnicity(item.id)}
+                  onClick={() => {
+                    setEthnicity(item.id);
+                    setStepError(null);
+                  }}
                 />
               ))}
             </div>
@@ -446,33 +555,58 @@ export default function CreatePage() {
                 <span>39+</span>
               </div>
             </div>
-            <button
-              type="button"
-              className="mt-8 w-full rounded-full bg-[var(--accent)] py-3 font-medium"
-              onClick={next}
-            >
-              Next
-            </button>
+            <h2 className="mt-10 text-center text-3xl font-semibold">Eye color</h2>
+            <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
+              {EYE_COLORS.map((item) => (
+                <EyeColorCard
+                  key={item.id}
+                  src={item.src}
+                  label={item.id}
+                  selected={eyeColor === item.id}
+                  onClick={() => {
+                    setEyeColor(item.id);
+                    setStepError(null);
+                  }}
+                />
+              ))}
+            </div>
+            <StepNav error={stepError} onPrev={back} onNext={next} />
           </section>
         ) : null}
 
         {step === "hair" ? (
           <section>
-            <h1 className="text-center text-3xl font-semibold">Hair color</h1>
+            <h1 className="text-center text-3xl font-semibold">Hair style</h1>
+            <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {hairStyles.map((item) => (
+                <PictureCard
+                  key={item.id}
+                  src={look === "anime" ? item.anime : item.src}
+                  label={item.id}
+                  selected={hairStyle === item.id}
+                  onClick={() => {
+                    setHairStyle(item.id);
+                    setStepError(null);
+                  }}
+                />
+              ))}
+            </div>
+            <h2 className="mt-10 text-center text-3xl font-semibold">Hair color</h2>
             <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
               {HAIR.map((item) => (
                 <PictureCard
                   key={item.id}
-                  src={section === "girls" ? item.src : GUY_HAIR[style][item.id]}
+                  src={section === "girls" ? item.src : GUY_HAIR[look][item.id]}
                   label={item.id}
                   selected={hair === item.id}
-                  onClick={() => setHair(item.id)}
+                  onClick={() => {
+                    setHair(item.id);
+                    setStepError(null);
+                  }}
                 />
               ))}
             </div>
-            <button type="button" className="mt-8 w-full rounded-full bg-[var(--accent)] py-3 font-medium" onClick={next}>
-              Next
-            </button>
+            <StepNav error={stepError} onPrev={back} onNext={next} />
           </section>
         ) : null}
 
@@ -487,29 +621,30 @@ export default function CreatePage() {
                     src={item.src}
                     label={item.id}
                     selected={body === item.id}
-                    onClick={() => setBody(item.id)}
+                    onClick={() => {
+                      setBody(item.id);
+                      setStepError(null);
+                    }}
                   />
                 ))}
               </div>
             ) : (
-              <div className="mt-6 grid grid-cols-2 gap-3">
+              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {GUY_BODIES.map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    onClick={() => setBody(item)}
-                    className={`rounded-2xl border px-4 py-8 text-lg ${
-                      body === item ? "border-white bg-white/10" : "border-white/10"
-                    }`}
-                  >
-                    {item}
-                  </button>
+                  <PictureCard
+                    key={item.id}
+                    src={item.src}
+                    label={item.id}
+                    selected={body === item.id}
+                    onClick={() => {
+                      setBody(item.id);
+                      setStepError(null);
+                    }}
+                  />
                 ))}
               </div>
             )}
-            <button type="button" className="mt-8 w-full rounded-full bg-[var(--accent)] py-3 font-medium" onClick={next}>
-              Next
-            </button>
+            <StepNav error={stepError} onPrev={back} onNext={next} />
           </section>
         ) : null}
 
@@ -523,13 +658,14 @@ export default function CreatePage() {
                   src={item.src}
                   label={item.id}
                   selected={breast === item.id}
-                  onClick={() => setBreast(item.id)}
+                  onClick={() => {
+                    setBreast(item.id);
+                    setStepError(null);
+                  }}
                 />
               ))}
             </div>
-            <button type="button" className="mt-8 w-full rounded-full bg-[var(--accent)] py-3 font-medium" onClick={next}>
-              Next
-            </button>
+            <StepNav error={stepError} onPrev={back} onNext={next} />
           </section>
         ) : null}
 
@@ -539,7 +675,10 @@ export default function CreatePage() {
             <div className="mt-4 flex items-center rounded-xl border border-white/10 bg-[#171717]">
               <input
                 value={name}
-                onChange={(event) => setName(event.target.value)}
+                onChange={(event) => {
+                  setName(event.target.value);
+                  setStepError(null);
+                }}
                 className="w-full bg-transparent px-4 py-3 outline-none"
               />
               <button type="button" className="px-4 text-white/70" onClick={shuffleName} aria-label="Shuffle name">
@@ -593,7 +732,10 @@ export default function CreatePage() {
                       <button
                         key={kink}
                         type="button"
-                        onClick={() => toggleKink(kink)}
+                        onClick={() => {
+                          toggleKink(kink);
+                          setStepError(null);
+                        }}
                         className={`rounded-full border px-3 py-1 text-sm ${
                           on ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-white/15"
                         }`}
@@ -618,13 +760,7 @@ export default function CreatePage() {
                 }}
               />
             </div>
-            <button
-              type="button"
-              className="mt-8 w-full rounded-full bg-[var(--accent)] py-3 font-medium"
-              onClick={drawPortrait}
-            >
-              Generate portrait
-            </button>
+            <StepNav error={stepError} onPrev={back} onNext={tryGenerate} nextLabel="Generate portrait" />
           </section>
         ) : null}
 
@@ -647,9 +783,11 @@ export default function CreatePage() {
             </div>
             <div className="mt-4 flex flex-wrap justify-center gap-2 text-xs text-white/70">
               {[
-                style === "anime" ? "Anime" : "Realistic",
+                look === "anime" ? "Anime" : "Realistic",
                 ethnicity,
                 age >= 39 ? "39+" : `${age}`,
+                eyeColor,
+                hairStyle,
                 hair,
                 body,
                 section === "girls" ? breast : null,
@@ -664,6 +802,13 @@ export default function CreatePage() {
                 ))}
             </div>
             <div className="mt-8 flex gap-3">
+              <button
+                type="button"
+                className="w-full rounded-full border border-white/20 py-3 font-medium"
+                onClick={back}
+              >
+                Previous
+              </button>
               {portraitError ? (
                 <button
                   type="button"
@@ -672,15 +817,16 @@ export default function CreatePage() {
                 >
                   Try again
                 </button>
-              ) : null}
-              <button
-                type="button"
-                disabled={!portrait || drawing}
-                className="w-full rounded-full bg-[var(--accent)] py-3 font-medium disabled:opacity-40"
-                onClick={finish}
-              >
-                Start the date
-              </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={!portrait || drawing}
+                  className="w-full rounded-full bg-[var(--accent)] py-3 font-medium disabled:opacity-40"
+                  onClick={finish}
+                >
+                  Start the date
+                </button>
+              )}
             </div>
           </section>
         ) : null}
@@ -708,6 +854,38 @@ function cropMark(dataUrl: string) {
     img.onerror = () => reject(new Error("Could not read the portrait."));
     img.src = dataUrl;
   });
+}
+
+function StepNav({
+  error,
+  onNext,
+  onPrev,
+  nextLabel = "Next",
+}: {
+  error: string | null;
+  onNext: () => void;
+  onPrev?: () => void;
+  nextLabel?: string;
+}) {
+  return (
+    <div className="mt-8">
+      {error ? <p className="mb-3 text-center text-sm text-red-400">{error}</p> : null}
+      <div className="flex gap-3">
+        {onPrev ? (
+          <button
+            type="button"
+            className="w-full rounded-full border border-white/20 py-3 font-medium"
+            onClick={onPrev}
+          >
+            Previous
+          </button>
+        ) : null}
+        <button type="button" className="w-full rounded-full bg-[var(--accent)] py-3 font-medium" onClick={onNext}>
+          {nextLabel}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function Field({

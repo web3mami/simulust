@@ -15,6 +15,8 @@ export type Character = {
   tags: string[];
   image?: string;
   hair?: string;
+  hairStyle?: string;
+  eyeColor?: string;
   breast?: string;
   personality?: string;
   occupation?: string;

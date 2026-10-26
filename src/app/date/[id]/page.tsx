@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AppHeader, AppShell } from "@/components/app-shell";
 import { findCharacter, type Character } from "@/lib/characters";
+import { touchThread } from "@/lib/threads";
 
 type Message = { from: "them" | "you"; text: string };
 
@@ -56,6 +57,7 @@ export default function DatePage() {
         text: "I heard you. The real model is not connected yet, so this reply is just the date screen. When it is, I will answer as me and keep what you train.",
       },
     ]);
+    touchThread(person.id, text);
     setDraft("");
   }
 
