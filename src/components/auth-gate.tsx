@@ -1,20 +1,26 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
 import { LoginScreen } from "@/components/login-screen";
-import {
-  clearSession,
-  sessionFromPrivyUser,
-  writeSession,
-  type Session,
-} from "@/lib/session";
+import { isPrivyConfigured } from "@/components/privy-app";
+import { sessionFromPrivyUser, type Session } from "@/lib/session";
+import type { Features, Me, MeResponse } from "@/lib/api-types";
+import { readDevUser, writeDevUser } from "@/lib/dev-user";
 
 type AuthIntent = "login" | "signup";
 
-type AuthValue = {
+export type AuthValue = {
+  ready: boolean;
   session: Session | null;
+  me: Me | null;
+  features: Features | null;
+  // The account is banned (or locked for an age review): the server answers
+  // 403 to everything.
+  suspended: boolean;
+  refreshMe: () => Promise<void>;
+  getToken: () => Promise<string | null>;
   signOut: () => void;
   openLogin: () => void;
   openSignup: () => void;
@@ -30,39 +36,148 @@ export function useSession() {
   return value;
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-  const { ready, authenticated, user, logout } = usePrivy();
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [authIntent, setAuthIntent] = useState<AuthIntent>("login");
+// Loads /api/me whenever the signed-in identity changes.
+function useMe(identity: string | null, getToken: () => Promise<string | null>) {
+  const [me, setMe] = useState<Me | null>(null);
+  const [features, setFeatures] = useState<Features | null>(null);
+  const [suspended, setSuspended] = useState<Suspension>(false);
 
-  const session =
-    ready && authenticated && user ? sessionFromPrivyUser(user) : null;
-
-  useEffect(() => {
-    if (!ready) return;
-    const oauthReturn = new URLSearchParams(window.location.search).has(
-      "privy_oauth_code",
-    );
-    if (session) {
-      writeSession(session);
-      setLoginOpen(false);
-      if (oauthReturn) router.replace("/profile");
+  const refreshMe = useCallback(async () => {
+    const token = await getToken();
+    const response = await fetch("/api/me", {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      cache: "no-store",
+    }).catch(() => null);
+    if (response?.status === 403) {
+      const body = (await response.json().catch(() => null)) as { code?: string } | null;
+      setSuspended(body?.code === "age_locked" ? "age_locked" : "policy");
+      setMe(null);
       return;
     }
-    if (oauthReturn) return;
-    clearSession();
+    if (!response?.ok) return;
+    const body = (await response.json()) as MeResponse;
+    setSuspended(false);
+    setMe(body.me);
+    setFeatures(body.features);
+  }, [getToken]);
+
+  useEffect(() => {
+    // Fetch on mount and whenever the signed-in identity changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refreshMe();
+  }, [identity, refreshMe]);
+
+  return { me: identity ? me : null, features, suspension: identity ? suspended : false, refreshMe };
+}
+
+type Suspension = false | "policy" | "age_locked";
+
+function SuspendedNotice({ reason, onSignOut }: { reason: Exclude<Suspension, false>; onSignOut: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
+      <div className="w-full max-w-md rounded-3xl border border-[var(--line)] bg-[var(--bg)] p-6 text-[var(--ink)]">
+        <h2 className="font-[family-name:var(--font-display)] text-2xl">
+          {reason === "age_locked" ? "This account is locked" : "This account is suspended"}
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+          {reason === "age_locked"
+            ? "An age check showed a birth date under 18, so the account is locked while we review it. If that's wrong, contact support and we'll look again. Support can also send you a copy of your data or delete it."
+            : "It broke the content policy. To appeal, or to get a copy of your data or have it deleted, contact support and include your account email or wallet address."}
+        </p>
+        {/* A locked account can't reach the chat, where crisis resources usually show. */}
+        <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+          If you&apos;re having thoughts of hurting yourself: in the US and Canada call or text{" "}
+          <a href="tel:988" className="underline">988</a>; in the UK and Ireland call Samaritans on{" "}
+          <a href="tel:116123" className="underline">116 123</a>; anywhere else,{" "}
+          <a href="https://findahelpline.com" target="_blank" rel="noreferrer" className="underline">
+            findahelpline.com
+          </a>
+          .
+        </p>
+        <div className="mt-6 flex gap-3">
+          <a href="/content-policy" className="rounded-full border border-white/20 px-4 py-2 text-sm">
+            Content policy
+          </a>
+          <button type="button" onClick={onSignOut} className="rounded-full bg-[var(--gold)] px-4 py-2 text-sm font-medium !text-[#12110F]">
+            Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoginModal({
+  open,
+  intent,
+  onClose,
+}: {
+  open: boolean;
+  intent: AuthIntent;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+      <div className="w-full max-w-md rounded-3xl border border-[var(--line)] bg-[var(--bg)]">
+        <div className="flex justify-end px-4 pt-4">
+          <button type="button" className="text-sm text-[var(--muted)]" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <LoginScreen embedded intent={intent} onSignedIn={onClose} />
+      </div>
+    </div>
+  );
+}
+
+function PrivyAuthProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const { ready, authenticated, user, logout, getAccessToken } = usePrivy();
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [authIntent, setAuthIntent] = useState<AuthIntent>("login");
+  const named = useRef<string | null>(null);
+
+  const session = ready && authenticated && user ? sessionFromPrivyUser(user) : null;
+  const getToken = useCallback(async () => (authenticated ? getAccessToken() : null), [authenticated, getAccessToken]);
+  const { me, features, suspension, refreshMe } = useMe(session ? user!.id : null, getToken);
+
+  useEffect(() => {
+    if (!ready || !session) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoginOpen(false);
+    if (new URLSearchParams(window.location.search).has("privy_oauth_code")) router.replace("/profile");
   }, [ready, session, router]);
 
+  // Give new accounts a display name from their login, once.
+  useEffect(() => {
+    if (!me || !session || me.displayName !== "You" || named.current === me.id) return;
+    named.current = me.id;
+    void (async () => {
+      const token = await getToken();
+      await fetch("/api/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ displayName: session.display.slice(0, 40) }),
+      });
+      await refreshMe();
+    })();
+  }, [me, session, getToken, refreshMe]);
+
   function signOut() {
-    clearSession();
     void logout();
   }
 
   return (
     <SessionContext.Provider
       value={{
+        ready,
         session,
+        me,
+        features,
+        suspended: Boolean(suspension),
+        refreshMe,
+        getToken,
         signOut,
         openLogin: () => {
           setAuthIntent("login");
@@ -75,26 +190,68 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
-      {loginOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-          <div className="w-full max-w-md rounded-3xl border border-[var(--line)] bg-[var(--bg)]">
-            <div className="flex justify-end px-4 pt-4">
-              <button
-                type="button"
-                className="text-sm text-[var(--muted)]"
-                onClick={() => setLoginOpen(false)}
-              >
-                Close
-              </button>
-            </div>
-            <LoginScreen
-              embedded
-              intent={authIntent}
-              onSignedIn={() => setLoginOpen(false)}
-            />
-          </div>
-        </div>
-      ) : null}
+      <LoginModal open={loginOpen} intent={authIntent} onClose={() => setLoginOpen(false)} />
+      {suspension ? <SuspendedNotice reason={suspension} onSignOut={signOut} /> : null}
     </SessionContext.Provider>
   );
 }
+
+// Local development without a Privy app id: sign in with any handle. The server
+// only honours this when NODE_ENV isn't production.
+function DevAuthProvider({ children }: { children: React.ReactNode }) {
+  const [handle, setHandle] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [authIntent, setAuthIntent] = useState<AuthIntent>("login");
+
+  useEffect(() => {
+    // Read the dev cookie once on mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHandle(readDevUser());
+    setReady(true);
+    function onChange() {
+      setHandle(readDevUser());
+      setLoginOpen(false);
+    }
+    window.addEventListener("simulust-dev-login", onChange);
+    return () => window.removeEventListener("simulust-dev-login", onChange);
+  }, []);
+
+  const getToken = useCallback(async () => null, []);
+  const { me, features, suspension, refreshMe } = useMe(handle, getToken);
+  const session: Session | null = handle ? { provider: "email", display: handle, detail: `dev:${handle}` } : null;
+
+  function devSignOut() {
+    writeDevUser(null);
+    setHandle(null);
+  }
+
+  return (
+    <SessionContext.Provider
+      value={{
+        ready,
+        session,
+        me,
+        features,
+        suspended: Boolean(suspension),
+        refreshMe,
+        getToken,
+        signOut: devSignOut,
+        openLogin: () => {
+          setAuthIntent("login");
+          setLoginOpen(true);
+        },
+        openSignup: () => {
+          setAuthIntent("signup");
+          setLoginOpen(true);
+        },
+      }}
+    >
+      {children}
+      <LoginModal open={loginOpen} intent={authIntent} onClose={() => setLoginOpen(false)} />
+      {suspension ? <SuspendedNotice reason={suspension} onSignOut={devSignOut} /> : null}
+    </SessionContext.Provider>
+  );
+}
+
+export const AuthProvider = isPrivyConfigured() ? PrivyAuthProvider : DevAuthProvider;

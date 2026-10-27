@@ -51,7 +51,9 @@ const NAV = [
 function navActive(href: string, pathname: string) {
   if (href === "/create") return pathname.startsWith("/create");
   if (href === "/chat") return pathname.startsWith("/chat") || pathname.startsWith("/date");
-  if (href === "/premium") return pathname.startsWith("/premium") || pathname.startsWith("/packs");
+  if (href === "/premium") {
+    return pathname.startsWith("/premium") || pathname.startsWith("/packs") || pathname.startsWith("/pricing");
+  }
   if (href === "/#explore") return false;
   return pathname === "/";
 }
@@ -73,6 +75,56 @@ export function AppHeader({ center }: { center?: ReactNode }) {
         <AccountMenu />
       </div>
     </header>
+  );
+}
+
+const FOOTER_LINKS = [
+  { href: "/terms", label: "Terms" },
+  { href: "/privacy", label: "Privacy" },
+  { href: "/content-policy", label: "Content policy" },
+  { href: "/safety", label: "Safety" },
+  { href: "/report", label: "Report" },
+  { href: "/2257", label: "2257" },
+  { href: "/dmca", label: "DMCA" },
+  { href: "/pricing", label: "Pricing" },
+];
+
+function SiteFooter() {
+  return (
+    <footer className="border-t border-[var(--line)] px-4 py-6 text-xs text-[var(--muted)]">
+      <div className="mx-auto max-w-5xl">
+        <nav aria-label="Legal" className="flex flex-wrap gap-x-5 gap-y-2">
+          {FOOTER_LINKS.map((link) => (
+            <Link key={link.href} href={link.href} className="hover:text-[var(--ink)]">
+              {link.label}
+            </Link>
+          ))}
+        </nav>
+        <p className="mt-3 leading-5">
+          18+ only. Every character is a fictional adult, and every image is AI-generated. You are talking to an AI, not
+          a person.
+        </p>
+      </div>
+    </footer>
+  );
+}
+
+// Layout for legal and policy pages: plain reading width, consistent headings.
+export function DocPage({ title, updated, children }: { title: string; updated: string; children: ReactNode }) {
+  return (
+    <AppShell>
+      <AppHeader />
+      <article className="mx-auto w-full max-w-3xl px-4 py-10">
+        <p className="rounded-2xl border border-[var(--gold)]/40 bg-[var(--gold)]/10 px-4 py-3 text-sm text-[var(--gold)]">
+          Draft: have counsel review before launch.
+        </p>
+        <h1 className="mt-8 font-[family-name:var(--font-display)] text-4xl text-[var(--ink)]">{title}</h1>
+        <p className="mt-2 text-sm text-[var(--muted)]">Last updated {updated}</p>
+        <div className="mt-6 text-[15px] leading-7 text-[var(--muted)] [&_a]:text-[var(--gold)] [&_a]:underline [&_a]:underline-offset-2 [&_h2]:mt-10 [&_h2]:font-[family-name:var(--font-display)] [&_h2]:text-2xl [&_h2]:text-[var(--ink)] [&_h3]:mt-6 [&_h3]:font-medium [&_h3]:text-[var(--ink)] [&_li]:mt-1.5 [&_ol]:mt-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:mt-3 [&_strong]:text-[var(--ink)] [&_ul]:mt-3 [&_ul]:list-disc [&_ul]:pl-5">
+          {children}
+        </div>
+      </article>
+    </AppShell>
   );
 }
 
@@ -137,7 +189,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Link>
         </aside>
 
-        <div className="min-w-0 flex-1 pb-20 lg:pb-0">{children}</div>
+        <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
+          <div className="flex-1">{children}</div>
+          {/* The chat screen needs the full height for the conversation. */}
+          {pathname.startsWith("/date/") ? null : <SiteFooter />}
+        </div>
       </div>
 
       <nav

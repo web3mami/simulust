@@ -4,37 +4,6 @@ export type Session = {
   detail: string;
 };
 
-export const SESSION_KEY = "simulust-session";
-
-export function readSession(): Session | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(SESSION_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Session;
-    if (
-      parsed.provider !== "google" &&
-      parsed.provider !== "twitter" &&
-      parsed.provider !== "email" &&
-      parsed.provider !== "wallet"
-    ) {
-      return null;
-    }
-    if (!parsed.display || !parsed.detail) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-export function writeSession(session: Session) {
-  window.localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-}
-
-export function clearSession() {
-  window.localStorage.removeItem(SESSION_KEY);
-}
-
 export type PrivyLikeUser = {
   id: string;
   google?: { name?: string | null; email?: string | null; subject?: string | null } | null;
@@ -84,7 +53,8 @@ export function sessionFromPrivyUser(user: PrivyLikeUser): Session {
     };
   }
 
-  const email = user.email ?? linked(user, "email");
+  const email: { address?: string | null; email?: string | null } | undefined =
+    user.email ?? linked(user, "email");
   if (email?.address || email?.email) {
     const address = email.address || email.email || "";
     return {

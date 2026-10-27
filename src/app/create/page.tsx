@@ -1,9 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppHeader, AppShell } from "@/components/app-shell";
-import { savePerson, type Character, type Lane } from "@/lib/characters";
+import { useSession } from "@/components/auth-gate";
+import { ApiError, useApi, useAuthHeaders } from "@/lib/api";
+import type { CharacterDTO, MediaDTO } from "@/lib/api-types";
+import { JOBS, KINKS, PERSONALITIES, type PortraitRequest } from "@/lib/portrait-prompt";
+import { COSTS, FREE } from "@/lib/pricing";
 
 type Section = "girls" | "guys";
 type Style = "realistic" | "anime";
@@ -12,35 +17,79 @@ type Step = "style" | "ethnicity" | "hair" | "body" | "breast" | "train" | "port
 const GIRL_NAMES = ["Elena Voss", "Maren Cole", "Camille Ortiz", "Priya Shah", "Ingrid Hale"];
 const GUY_NAMES = ["Adrian Cole", "Marco Diaz", "Julian Park", "Malik Grant", "Kenji Mori"];
 
-const PERSONALITIES = ["Submissive", "Dominant", "Sweet", "Bratty", "Playful", "Cold"];
-const GIRL_ROLES = ["Girlfriend", "Stranger", "Exclusive", "Friends with benefits"];
-const GUY_ROLES = ["Boyfriend", "Stranger", "Exclusive", "Friends with benefits"];
-const JOBS = ["Designer", "Bartender", "Nurse", "Model", "Chef", "Photographer", "Dancer", "Founder"];
-const KINKS = ["Praise", "Teasing", "Dominance", "Submission", "Lingerie", "Possessive"];
+// Every option is typed against the lists the portrait and character routes
+// accept, so the page can only send values the server takes.
+type Option<Field extends keyof PortraitRequest> = { id: NonNullable<PortraitRequest[Field]>; src: string };
+
+const GIRL_ROLES: PortraitRequest["role"][] = ["Girlfriend", "Stranger", "Exclusive", "Friends with benefits"];
+const GUY_ROLES: PortraitRequest["role"][] = ["Boyfriend", "Stranger", "Exclusive", "Friends with benefits"];
 const VOICES = ["Voice 1", "Voice 2", "Voice 3", "Voice 4", "Voice 5", "Voice 6"];
 
-const GIRL_ETHNICITY = [
+const MIN_AGE = 18;
+const MAX_AGE = 39;
+const clampAge = (value: number) => Math.min(MAX_AGE, Math.max(MIN_AGE, Math.round(Number.isFinite(value) ? value : MIN_AGE)));
+
+// Choices survive a login round trip (OAuth leaves the page) for this tab only.
+const DRAFT_KEY = "simulust-create-draft";
+
+type Draft = {
+  section: Section;
+  style: Style | "";
+  ethnicity: string;
+  eyeColor: string;
+  age: number;
+  hairStyle: string;
+  hair: string;
+  body: string;
+  breast: string;
+  name: string;
+  personality: string;
+  role: string;
+  occupation: string;
+  kinks: string[];
+  voice: string;
+};
+
+function readDraft(): Draft | null {
+  try {
+    const raw = window.sessionStorage.getItem(DRAFT_KEY);
+    window.sessionStorage.removeItem(DRAFT_KEY);
+    return raw ? (JSON.parse(raw) as Draft) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(draft: Draft) {
+  try {
+    window.sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    // Private mode or storage blocked: the choices just won't survive a reload.
+  }
+}
+
+const GIRL_ETHNICITY: (Option<"ethnicity"> & { realistic: string })[] = [
   { id: "Caucasian", src: "/creator/eth-girl-anime-caucasian.jpg", realistic: "/characters/june.jpg" },
   { id: "Asian", src: "/creator/eth-girl-anime-asian.jpg", realistic: "/characters/aiko.jpg" },
   { id: "Latina", src: "/creator/eth-girl-anime-latina.jpg", realistic: "/characters/lucia.jpg" },
   { id: "Black", src: "/creator/eth-girl-anime-black.jpg", realistic: "/characters/amara.jpg" },
 ];
 
-const GUY_ETHNICITY = [
+const GUY_ETHNICITY: (Option<"ethnicity"> & { realistic: string })[] = [
   { id: "Caucasian", src: "/creator/eth-guy-anime-caucasian.jpg", realistic: "/creator/eth-guy-realistic-caucasian.jpg" },
   { id: "Asian", src: "/creator/eth-guy-anime-asian.jpg", realistic: "/creator/eth-guy-realistic-asian.jpg" },
   { id: "Latino", src: "/creator/eth-guy-anime-latino.jpg", realistic: "/creator/eth-guy-realistic-latino.jpg" },
   { id: "Black", src: "/creator/eth-guy-anime-black.jpg", realistic: "/creator/eth-guy-realistic-black.jpg" },
 ];
 
-const HAIR = [
+const HAIR: Option<"hair">[] = [
   { id: "Blonde", src: "/creator/hair-blonde.jpg" },
   { id: "Brunette", src: "/creator/hair-brunette.jpg" },
   { id: "Black", src: "/creator/hair-black.jpg" },
   { id: "Red", src: "/creator/hair-red.jpg" },
 ];
 
-const GIRL_HAIR_STYLES = [
+const GIRL_HAIR_STYLES: (Option<"hairStyle"> & { anime: string })[] = [
   { id: "Straight", src: "/creator/hair-style-girl-straight.jpg", anime: "/creator/hair-style-girl-anime-straight.jpg" },
   { id: "Wavy", src: "/creator/hair-style-girl-wavy.jpg", anime: "/creator/hair-style-girl-anime-wavy.jpg" },
   { id: "Curly", src: "/creator/hair-style-girl-curly.jpg", anime: "/creator/hair-style-girl-anime-curly.jpg" },
@@ -51,7 +100,7 @@ const GIRL_HAIR_STYLES = [
   { id: "Bun", src: "/creator/hair-style-girl-bun.jpg", anime: "/creator/hair-style-girl-anime-bun.jpg" },
 ];
 
-const GUY_HAIR_STYLES = [
+const GUY_HAIR_STYLES: (Option<"hairStyle"> & { anime: string })[] = [
   { id: "Short", src: "/creator/hair-style-guy-short.jpg", anime: "/creator/hair-style-guy-anime-short.jpg" },
   { id: "Medium", src: "/creator/hair-style-guy-medium.jpg", anime: "/creator/hair-style-guy-anime-medium.jpg" },
   { id: "Long", src: "/creator/hair-style-guy-long.jpg", anime: "/creator/hair-style-guy-anime-long.jpg" },
@@ -62,7 +111,7 @@ const GUY_HAIR_STYLES = [
   { id: "Slicked back", src: "/creator/hair-style-guy-slicked.jpg", anime: "/creator/hair-style-guy-anime-slicked.jpg" },
 ];
 
-const EYE_COLORS = [
+const EYE_COLORS: Option<"eyeColor">[] = [
   { id: "Brown", src: "/creator/eye-brown.jpg" },
   { id: "Hazel", src: "/creator/eye-hazel.jpg" },
   { id: "Green", src: "/creator/eye-green.jpg" },
@@ -86,21 +135,21 @@ const GUY_HAIR: Record<Style, Record<string, string>> = {
   },
 };
 
-const BODIES = [
+const BODIES: Option<"body">[] = [
   { id: "Petite", src: "/creator/body-petite.jpg" },
   { id: "Athletic", src: "/creator/body-athletic.jpg" },
   { id: "Curvy", src: "/creator/body-curvy.jpg" },
   { id: "Thick", src: "/creator/body-thick.jpg" },
 ];
 
-const GUY_BODIES = [
+const GUY_BODIES: Option<"body">[] = [
   { id: "Slim", src: "/creator/body-guy-slim.jpg" },
   { id: "Athletic", src: "/creator/body-guy-athletic.jpg" },
   { id: "Muscular", src: "/creator/body-guy-muscular.jpg" },
   { id: "Soft", src: "/creator/body-guy-soft.jpg" },
 ];
 
-const BREASTS = [
+const BREASTS: Option<"breast">[] = [
   { id: "Small", src: "/creator/breast-small.jpg" },
   { id: "Medium", src: "/creator/breast-medium.jpg" },
   { id: "Large", src: "/creator/breast-large.jpg" },
@@ -189,6 +238,44 @@ function EyeColorCard({
   );
 }
 
+// /api/media URLs authenticate with the session cookie. If the browser didn't
+// send one, fetch the image with the bearer token instead.
+function MediaImage({ url, className }: { url: string; className: string }) {
+  const authHeaders = useAuthHeaders();
+  const [src, setSrc] = useState(url);
+  const [failed, setFailed] = useState(false);
+  const retried = useRef(false);
+
+  useEffect(() => {
+    if (!src.startsWith("blob:")) return;
+    return () => URL.revokeObjectURL(src);
+  }, [src]);
+
+  const retry = useCallback(async () => {
+    if (retried.current) {
+      setFailed(true);
+      return;
+    }
+    retried.current = true;
+    try {
+      const response = await fetch(url, { headers: await authHeaders(), cache: "no-store" });
+      if (!response.ok) throw new Error(String(response.status));
+      setSrc(URL.createObjectURL(await response.blob()));
+    } catch {
+      setFailed(true);
+    }
+  }, [url, authHeaders]);
+
+  if (failed) {
+    return (
+      <div className={`${className} flex items-center justify-center border border-white/10 bg-[#171717] px-6 text-center text-sm text-white/70`}>
+        The portrait was made but won&apos;t load. Refresh the page to try again.
+      </div>
+    );
+  }
+  return <img src={src} alt="" className={className} onError={() => void retry()} />;
+}
+
 function PictureCard({
   src,
   frames,
@@ -266,6 +353,8 @@ function PictureCard({
 
 export default function CreatePage() {
   const router = useRouter();
+  const { session, me, openLogin, refreshMe } = useSession();
+  const api = useApi();
   const [section, setSection] = useState<Section>("girls");
   const [style, setStyle] = useState<Style | "">("");
   const [step, setStep] = useState<Step>("style");
@@ -278,16 +367,43 @@ export default function CreatePage() {
   const [breast, setBreast] = useState("");
   const [stepError, setStepError] = useState<string | null>(null);
   const [name, setName] = useState(GIRL_NAMES[0]);
-  const [personality, setPersonality] = useState(PERSONALITIES[0]);
-  const [role, setRole] = useState(GIRL_ROLES[0]);
-  const [occupation, setOccupation] = useState(JOBS[0]);
+  const [personality, setPersonality] = useState<string>(PERSONALITIES[0]);
+  const [role, setRole] = useState<string>(GIRL_ROLES[0]);
+  const [occupation, setOccupation] = useState<string>(JOBS[0]);
   const [kinks, setKinks] = useState<string[]>(["Praise"]);
   const [voice, setVoice] = useState(VOICES[0]);
   const [openField, setOpenField] = useState<string | null>(null);
-  const [portrait, setPortrait] = useState<string | null>(null);
+  const [portrait, setPortrait] = useState<MediaDTO | null>(null);
   const [portraitError, setPortraitError] = useState<string | null>(null);
+  const [needsCredits, setNeedsCredits] = useState(false);
   const [drawing, setDrawing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const drawToken = useRef(0);
+
+  useEffect(() => {
+    const draft = readDraft();
+    if (!draft) return;
+    // Restore choices saved before the login prompt, once, on mount.
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setSection(draft.section === "guys" ? "guys" : "girls");
+    setStyle(draft.style);
+    setEthnicity(draft.ethnicity);
+    setEyeColor(draft.eyeColor);
+    setAge(clampAge(draft.age));
+    setHairStyle(draft.hairStyle);
+    setHair(draft.hair);
+    setBody(draft.body);
+    setBreast(draft.breast);
+    setName(draft.name);
+    setPersonality(draft.personality);
+    setRole(draft.role);
+    setOccupation(draft.occupation);
+    setKinks(Array.isArray(draft.kinks) ? draft.kinks.slice(0, 3) : []);
+    setVoice(draft.voice);
+    setStep("train");
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
 
   const steps = useMemo<Step[]>(
     () =>
@@ -320,6 +436,7 @@ export default function CreatePage() {
     setName(next === "girls" ? GIRL_NAMES[0] : GUY_NAMES[0]);
     setPortrait(null);
     setPortraitError(null);
+    setNeedsCredits(false);
     setStepError(null);
     setStep("style");
   }
@@ -363,6 +480,28 @@ export default function CreatePage() {
       setStepError("You have to select all options.");
       return;
     }
+    if (!session) {
+      writeDraft({
+        section,
+        style,
+        ethnicity,
+        eyeColor,
+        age,
+        hairStyle,
+        hair,
+        body,
+        breast,
+        name,
+        personality,
+        role,
+        occupation,
+        kinks,
+        voice,
+      });
+      setStepError("Log in to generate your portrait. Your choices are saved.");
+      openLogin();
+      return;
+    }
     setStepError(null);
     void drawPortrait();
   }
@@ -380,84 +519,80 @@ export default function CreatePage() {
     setDrawing(true);
     setPortrait(null);
     setPortraitError(null);
+    setNeedsCredits(false);
+    setSaveError(null);
     try {
-      const payloadBody = JSON.stringify({
-        section,
-        style,
-        ethnicity,
-        age,
-        hair,
-        hairStyle,
-        eyeColor,
-        body,
-        breast: section === "girls" ? breast : undefined,
-        personality,
-        role,
-        occupation,
-        kinks,
-      });
-      let response = await fetch("/api/portrait", {
+      const { media } = await api<{ media: MediaDTO }>("/api/portrait", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: payloadBody,
+        json: {
+          section,
+          style,
+          ethnicity,
+          age: clampAge(age),
+          hair,
+          hairStyle,
+          eyeColor,
+          body,
+          breast: section === "girls" ? breast : undefined,
+          personality,
+          role,
+          occupation,
+          kinks,
+          name: name.trim(),
+        },
       });
-      if (!response.ok) {
-        response = await fetch("/api/portrait", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: payloadBody,
-        });
-      }
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(payload?.error || "Portrait could not be generated.");
-      }
-      const blob = await response.blob();
-      const rawUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error("Could not read the portrait."));
-        reader.readAsDataURL(blob);
-      });
-      const dataUrl = await cropMark(rawUrl);
       if (token !== drawToken.current) return;
-      setPortrait(dataUrl);
+      if (media.status !== "ready" || !media.url) throw new Error(media.error ?? "Portrait could not be generated. Try again.");
+      setPortrait(media);
     } catch (error) {
       if (token !== drawToken.current) return;
-      setPortraitError(error instanceof Error ? error.message : "Portrait could not be generated.");
+      if (error instanceof ApiError && error.status === 401) {
+        setPortraitError("Log in to generate your portrait.");
+        openLogin();
+      } else if (error instanceof ApiError && error.status === 402) {
+        setNeedsCredits(true);
+        setPortraitError(`A portrait costs ${COSTS.portrait} credits and you don't have enough.`);
+      } else {
+        setPortraitError(error instanceof Error ? error.message : "Portrait could not be generated. Try again.");
+      }
     } finally {
       if (token === drawToken.current) setDrawing(false);
+      void refreshMe();
     }
   }
 
-  function finish() {
-    if (!portrait) return;
-    const lane: Lane = look === "anime" ? "anime" : section === "guys" ? "guys" : "girls";
-    const person: Character = {
-      id: crypto.randomUUID(),
-      name: name.trim() || "Unnamed",
-      age,
-      gender: section === "guys" ? "Man" : "Woman",
-      ethnicity,
-      body,
-      role,
-      heat: personality,
-      line: `${name.trim()} is ${personality.toLowerCase()}, works as a ${occupation.toLowerCase()}, and likes ${kinks.join(", ") || "being direct"}. ${voice}.`,
-      color: "#3a3348",
-      lane,
-      tags: [body, personality, hair, hairStyle, eyeColor],
-      image: portrait,
-      hair,
-      hairStyle,
-      eyeColor,
-      breast: section === "girls" ? breast : undefined,
-      personality,
-      occupation,
-      kinks,
-      voice,
-    };
-    savePerson(person);
-    router.push(`/date/${person.id}`);
+  async function finish() {
+    if (!portrait || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const { character } = await api<{ character: CharacterDTO }>("/api/characters", {
+        method: "POST",
+        json: {
+          name: name.trim(),
+          age: clampAge(age),
+          gender: section === "guys" ? "Man" : "Woman",
+          style: look,
+          ethnicity,
+          body,
+          role,
+          personality,
+          occupation,
+          hair,
+          hairStyle,
+          eyeColor,
+          breast: section === "girls" ? breast : undefined,
+          kinks,
+          voice,
+          imageMediaId: portrait.id,
+        },
+      });
+      router.push(`/date/${character.id}`);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) openLogin();
+      setSaveError(error instanceof Error ? error.message : "We couldn't save your character. Try again.");
+      setSaving(false);
+    }
   }
 
   const styleCards =
@@ -544,10 +679,12 @@ export default function CreatePage() {
               </p>
               <input
                 type="range"
-                min={18}
-                max={39}
+                min={MIN_AGE}
+                max={MAX_AGE}
+                step={1}
                 value={age}
-                onChange={(event) => setAge(Number(event.target.value))}
+                aria-label="Age"
+                onChange={(event) => setAge(clampAge(Number(event.target.value)))}
                 className="mt-6 w-full accent-[var(--accent)]"
               />
               <div className="mt-2 flex justify-between text-sm text-white/60">
@@ -675,6 +812,8 @@ export default function CreatePage() {
             <div className="mt-4 flex items-center rounded-xl border border-white/10 bg-[#171717]">
               <input
                 value={name}
+                maxLength={30}
+                aria-label="Name"
                 onChange={(event) => {
                   setName(event.target.value);
                   setStepError(null);
@@ -685,7 +824,7 @@ export default function CreatePage() {
                 Shuffle
               </button>
             </div>
-            <p className="mt-1 text-right text-xs text-white/40">{name.trim().length}/40</p>
+            <p className="mt-1 text-right text-xs text-white/40">{name.trim().length}/30</p>
 
             <h2 className="mt-8 text-center text-3xl font-semibold">Choose personality</h2>
             <p className="text-center text-sm text-white/50">Click to change</p>
@@ -760,7 +899,17 @@ export default function CreatePage() {
                 }}
               />
             </div>
-            <StepNav error={stepError} onPrev={back} onNext={tryGenerate} nextLabel="Generate portrait" />
+            <p className="mt-6 text-center text-sm text-white/60">
+              {me
+                ? `A portrait uses ${COSTS.portrait} credits. You have ${me.balance.toLocaleString("en-US")}.`
+                : `A portrait uses ${COSTS.portrait} credits. New accounts start with ${FREE.signupCredits} free.`}
+            </p>
+            <StepNav
+              error={stepError}
+              onPrev={back}
+              onNext={tryGenerate}
+              nextLabel={`Generate portrait · ${COSTS.portrait} credits`}
+            />
           </section>
         ) : null}
 
@@ -773,13 +922,39 @@ export default function CreatePage() {
                 : "Drawn from the style, ethnicity, age, hair, body, and personality you picked."}
             </p>
             <div className="mx-auto mt-6 max-w-sm">
-              {portrait ? (
-                <img src={portrait} alt="" className="aspect-[3/4] w-full rounded-2xl object-cover" />
+              {portrait?.url ? (
+                <MediaImage key={portrait.id} url={portrait.url} className="aspect-[3/4] w-full rounded-2xl object-cover" />
               ) : (
-                <div className="flex aspect-[3/4] w-full items-center justify-center rounded-2xl border border-white/10 bg-[#171717] px-6 text-center text-white/70">
-                  {drawing ? "Drawing this character from your choices…" : portraitError}
+                <div
+                  className="flex aspect-[3/4] w-full flex-col items-center justify-center gap-3 rounded-2xl border border-white/10 bg-[#171717] px-6 text-center text-white/70"
+                  aria-live="polite"
+                >
+                  {drawing ? (
+                    <>
+                      <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/15 border-t-[var(--gold)]" aria-hidden />
+                      <span>Drawing this character from your choices…</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>{portraitError ?? "Something went wrong. Try again."}</span>
+                      {needsCredits ? (
+                        <Link href="/premium" className="rounded-full bg-[var(--gold)] px-4 py-2 text-sm font-medium !text-[#12110F]">
+                          Get credits
+                        </Link>
+                      ) : null}
+                    </>
+                  )}
                 </div>
               )}
+              {portrait && !drawing ? (
+                <button
+                  type="button"
+                  className="mx-auto mt-3 block text-sm text-white/60 underline-offset-4 hover:text-white hover:underline"
+                  onClick={drawPortrait}
+                >
+                  Redraw · {COSTS.portrait} credits
+                </button>
+              ) : null}
             </div>
             <div className="mt-4 flex flex-wrap justify-center gap-2 text-xs text-white/70">
               {[
@@ -801,30 +976,41 @@ export default function CreatePage() {
                   </span>
                 ))}
             </div>
+            {saveError ? <p className="mt-6 text-center text-sm text-red-400">{saveError}</p> : null}
             <div className="mt-8 flex gap-3">
               <button
                 type="button"
                 className="w-full rounded-full border border-white/20 py-3 font-medium"
                 onClick={back}
+                disabled={saving}
               >
                 Previous
               </button>
-              {portraitError ? (
-                <button
-                  type="button"
-                  className="w-full rounded-full border border-white/20 py-3 font-medium"
-                  onClick={drawPortrait}
-                >
-                  Try again
-                </button>
+              {portraitError && !drawing ? (
+                needsCredits ? (
+                  <Link
+                    href="/premium"
+                    className="w-full rounded-full bg-[var(--accent)] py-3 text-center font-medium"
+                  >
+                    Get credits
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    className="w-full rounded-full border border-white/20 py-3 font-medium"
+                    onClick={session ? drawPortrait : openLogin}
+                  >
+                    {session ? `Try again · ${COSTS.portrait} credits` : "Log in"}
+                  </button>
+                )
               ) : (
                 <button
                   type="button"
-                  disabled={!portrait || drawing}
+                  disabled={!portrait || drawing || saving}
                   className="w-full rounded-full bg-[var(--accent)] py-3 font-medium disabled:opacity-40"
                   onClick={finish}
                 >
-                  Start the date
+                  {saving ? "Saving…" : "Start the date"}
                 </button>
               )}
             </div>
@@ -833,27 +1019,6 @@ export default function CreatePage() {
       </div>
     </AppShell>
   );
-}
-
-function cropMark(dataUrl: string) {
-  return new Promise<string>((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      const cut = Math.round(img.height * 0.055);
-      canvas.width = img.width;
-      canvas.height = Math.max(1, img.height - cut);
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        resolve(dataUrl);
-        return;
-      }
-      ctx.drawImage(img, 0, 0, img.width, canvas.height, 0, 0, img.width, canvas.height);
-      resolve(canvas.toDataURL("image/jpeg", 0.92));
-    };
-    img.onerror = () => reject(new Error("Could not read the portrait."));
-    img.src = dataUrl;
-  });
 }
 
 function StepNav({
@@ -899,7 +1064,7 @@ function Field({
   label: string;
   value: string;
   open: boolean;
-  options: string[];
+  options: readonly string[];
   onToggle: () => void;
   onPick: (value: string) => void;
 }) {

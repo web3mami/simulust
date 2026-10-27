@@ -7,7 +7,7 @@ export default function PacksPage() {
   return (
     <AppShell>
       <AppHeader />
-      <Shop />
+      <Shop focus="packs" />
     </AppShell>
   );
 }

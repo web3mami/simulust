@@ -1,18 +1,26 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AppHeader, AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
-import {
-  loadProfile,
-  saveProfile,
-  type ProfileGender,
-  type ProfileLane,
-  type UserProfile,
-} from "@/lib/profile";
+import { ApiError, useApi } from "@/lib/api";
+
+type ProfileGender = "Woman" | "Man" | "Non-binary";
+type ProfileLane = "Girls" | "Anime" | "Guys";
+
+// What GET/PUT /api/me/profile return.
+type Profile = {
+  name: string;
+  gender: ProfileGender;
+  looking: ProfileLane[];
+  bio: string;
+  updatedAt: string;
+};
 
 const GENDERS: ProfileGender[] = ["Woman", "Man", "Non-binary"];
 const LANES: ProfileLane[] = ["Girls", "Anime", "Guys"];
+const NAME_MAX = 40;
+const BIO_MAX = 500;
 
 const PROVIDER_LABEL = {
   google: "Google",
@@ -21,72 +29,102 @@ const PROVIDER_LABEL = {
   wallet: "Wallet",
 } as const;
 
-const emptyForm = {
-  name: "",
-  photo: "",
-  gender: "Woman" as ProfileGender,
-  looking: ["Girls"] as ProfileLane[],
-  bio: "",
-};
+type Form = Omit<Profile, "updatedAt">;
+
+type Load =
+  | { state: "loading" }
+  | { state: "error"; message: string }
+  | { state: "ready"; profile: Profile | null };
+
+function initialOf(name: string) {
+  return name.trim().charAt(0).toUpperCase() || "U";
+}
+
+function formFrom(profile: Profile | null, fallbackName: string): Form {
+  return {
+    name: profile?.name || fallbackName.slice(0, NAME_MAX),
+    gender: profile?.gender || "Woman",
+    looking: profile?.looking?.length ? profile.looking : ["Girls"],
+    bio: profile?.bio || "",
+  };
+}
+
+function messageOf(error: unknown, fallback: string) {
+  return error instanceof ApiError ? error.message : fallback;
+}
 
 export default function ProfilePage() {
-  const { session, signOut, openLogin, openSignup } = useSession();
-  const [saved, setSaved] = useState<UserProfile | null>(null);
+  const { ready, session, me, refreshMe, signOut, openLogin, openSignup } = useSession();
+  const api = useApi();
+  const [load, setLoad] = useState<Load>({ state: "loading" });
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState(emptyForm);
-  const photoInput = useRef<HTMLInputElement>(null);
+  const [form, setForm] = useState<Form>(() => formFrom(null, ""));
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
+  const identity = session?.detail ?? null;
+  const fallbackName = me && me.displayName !== "You" ? me.displayName : (session?.display ?? "");
 
   useEffect(() => {
-    if (!session) {
-      setSaved(null);
-      setEditing(false);
-      return;
-    }
-    const profile = loadProfile(session.detail);
-    setSaved(profile);
-    setEditing(!profile);
-    setForm({
-      name: profile?.name || session.display,
-      photo: profile?.photo || "",
-      gender: profile?.gender || "Woman",
-      looking: profile?.looking?.length ? profile.looking : ["Girls"],
-      bio: profile?.bio || "",
-    });
-  }, [session]);
-
-  function onPhoto(file: File | undefined) {
-    if (!file || !file.type.startsWith("image/")) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setForm((current) => ({ ...current, photo: String(reader.result || "") }));
+    if (!identity) return;
+    let cancelled = false;
+    // Reset before each load so a previous account's profile never shows.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoad({ state: "loading" });
+    api<{ profile: Profile | null }>("/api/me/profile")
+      .then(({ profile }) => {
+        if (cancelled) return;
+        setLoad({ state: "ready", profile });
+        setEditing(!profile);
+        setSaveError(null);
+        setForm(formFrom(profile, fallbackName));
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setLoad({ state: "error", message: messageOf(error, "We couldn't load your profile. Check your connection and try again.") });
+      });
+    return () => {
+      cancelled = true;
     };
-    reader.readAsDataURL(file);
-  }
+    // fallbackName only seeds a new form; reloading when it changes would wipe edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identity, api, attempt]);
 
-  function toggleLane(lane: ProfileLane) {
+  const saved = load.state === "ready" ? load.profile : null;
+
+  const toggleLane = useCallback((lane: ProfileLane) => {
     setForm((current) => {
       const on = current.looking.includes(lane);
-      const looking = on
-        ? current.looking.filter((item) => item !== lane)
-        : [...current.looking, lane];
+      const looking = on ? current.looking.filter((item) => item !== lane) : [...current.looking, lane];
       return { ...current, looking: looking.length ? looking : [lane] };
     });
+  }, []);
+
+  async function submit() {
+    const name = form.name.trim();
+    if (!name || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const { profile } = await api<{ profile: Profile }>("/api/me/profile", {
+        method: "PUT",
+        json: { name, gender: form.gender, looking: form.looking, bio: form.bio.trim() },
+      });
+      setLoad({ state: "ready", profile });
+      setForm(formFrom(profile, name));
+      setEditing(false);
+      void refreshMe();
+    } catch (error) {
+      setSaveError(messageOf(error, "Your profile didn't save. Check your connection and try again."));
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function submit() {
-    if (!session) return;
-    const name = form.name.trim();
-    if (!name) return;
-    const profile: UserProfile = {
-      owner: session.detail,
-      name,
-      photo: form.photo,
-      gender: form.gender,
-      looking: form.looking,
-      bio: form.bio.trim(),
-    };
-    saveProfile(profile);
-    setSaved(profile);
+  function cancelEdit() {
+    setForm(formFrom(saved, fallbackName));
+    setSaveError(null);
     setEditing(false);
   }
 
@@ -97,7 +135,9 @@ export default function ProfilePage() {
         <h1 className="font-[family-name:var(--font-display)] text-4xl text-[var(--ink)]">
           Profile
         </h1>
-        {!session ? (
+        {!ready ? (
+          <ProfileSkeleton />
+        ) : !session ? (
           <div className="mt-8">
             <p className="text-[var(--muted)]">Sign in to set up your profile.</p>
             <div className="mt-6 flex flex-wrap gap-3">
@@ -117,45 +157,46 @@ export default function ProfilePage() {
               </button>
             </div>
           </div>
+        ) : load.state === "loading" ? (
+          <ProfileSkeleton />
+        ) : load.state === "error" ? (
+          <div className="mt-8" role="alert">
+            <p className="text-[var(--muted)]">{load.message}</p>
+            <button
+              type="button"
+              className="mt-6 rounded-full border border-white/20 px-6 py-3 text-sm text-[var(--ink)]"
+              onClick={() => setAttempt((value) => value + 1)}
+            >
+              Try again
+            </button>
+          </div>
         ) : editing ? (
           <form
             className="mt-8 space-y-6"
             onSubmit={(event) => {
               event.preventDefault();
-              submit();
+              void submit();
             }}
           >
             <p className="text-[var(--muted)]">
               This is you. Characters will remember the name you set here.
             </p>
-            <button
-              type="button"
-              className="relative flex h-28 w-28 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-white/5"
-              onClick={() => photoInput.current?.click()}
-            >
-              {form.photo ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={form.photo} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <span className="text-3xl text-[var(--muted)]">
-                  {(form.name || session.display).trim().charAt(0).toUpperCase() || "U"}
-                </span>
-              )}
-              <span className="absolute inset-x-0 bottom-0 bg-black/55 py-1 text-[11px] text-[var(--ink)]">
-                Photo
-              </span>
-            </button>
-            <input
-              ref={photoInput}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(event) => onPhoto(event.target.files?.[0])}
-            />
+            <div className="flex items-center gap-4">
+              <div
+                aria-hidden
+                className="flex h-28 w-28 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/5 text-3xl text-[var(--muted)]"
+              >
+                {initialOf(form.name || session.display)}
+              </div>
+              <p className="text-sm leading-6 text-[var(--muted)]">
+                We don&apos;t take photo uploads, so your initial stands in for a picture.
+              </p>
+            </div>
             <label className="block">
               <span className="text-xs uppercase tracking-wide text-[var(--muted)]">Name</span>
               <input
                 value={form.name}
+                maxLength={NAME_MAX}
                 onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
                 className="mt-2 w-full rounded-2xl border border-[var(--line)] bg-transparent px-4 py-3 text-[var(--ink)] outline-none focus:border-[var(--gold)]"
                 required
@@ -168,6 +209,7 @@ export default function ProfilePage() {
                   <button
                     key={gender}
                     type="button"
+                    aria-pressed={form.gender === gender}
                     className={`rounded-full px-4 py-2 text-sm ${
                       form.gender === gender
                         ? "bg-[var(--gold)] !text-[#12110F]"
@@ -187,6 +229,7 @@ export default function ProfilePage() {
                   <button
                     key={lane}
                     type="button"
+                    aria-pressed={form.looking.includes(lane)}
                     className={`rounded-full px-4 py-2 text-sm ${
                       form.looking.includes(lane)
                         ? "bg-[var(--gold)] !text-[#12110F]"
@@ -200,27 +243,40 @@ export default function ProfilePage() {
               </div>
             </fieldset>
             <label className="block">
-              <span className="text-xs uppercase tracking-wide text-[var(--muted)]">About you</span>
+              <span className="flex items-baseline justify-between text-xs uppercase tracking-wide text-[var(--muted)]">
+                About you
+                <span className="normal-case tracking-normal">
+                  {form.bio.length}/{BIO_MAX}
+                </span>
+              </span>
               <textarea
                 value={form.bio}
+                maxLength={BIO_MAX}
                 onChange={(event) => setForm((current) => ({ ...current, bio: event.target.value }))}
                 rows={4}
                 className="mt-2 w-full resize-none rounded-2xl border border-[var(--line)] bg-transparent px-4 py-3 text-[var(--ink)] outline-none focus:border-[var(--gold)]"
                 placeholder="What should they know about you?"
               />
             </label>
+            {saveError ? (
+              <p role="alert" className="text-sm text-red-400">
+                {saveError}
+              </p>
+            ) : null}
             <div className="flex flex-wrap gap-3">
               <button
                 type="submit"
-                className="rounded-full bg-[var(--gold)] px-6 py-3 text-sm font-medium !text-[#12110F]"
+                disabled={saving || !form.name.trim()}
+                className="rounded-full bg-[var(--gold)] px-6 py-3 text-sm font-medium !text-[#12110F] disabled:opacity-60"
               >
-                Save profile
+                {saving ? "Saving…" : "Save profile"}
               </button>
               {saved ? (
                 <button
                   type="button"
-                  className="rounded-full border border-white/20 px-6 py-3 text-sm text-[var(--ink)]"
-                  onClick={() => setEditing(false)}
+                  disabled={saving}
+                  className="rounded-full border border-white/20 px-6 py-3 text-sm text-[var(--ink)] disabled:opacity-60"
+                  onClick={cancelEdit}
                 >
                   Cancel
                 </button>
@@ -230,30 +286,25 @@ export default function ProfilePage() {
         ) : saved ? (
           <div className="mt-8">
             <div className="flex items-center gap-4">
-              <div className="h-24 w-24 overflow-hidden rounded-full border border-white/15 bg-white/5">
-                {saved.photo ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={saved.photo} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center text-3xl">
-                    {saved.name.trim().charAt(0).toUpperCase()}
-                  </div>
-                )}
+              <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/5 text-3xl">
+                {initialOf(saved.name)}
               </div>
-              <div>
-                <p className="font-[family-name:var(--font-display)] text-3xl text-[var(--ink)]">
+              <div className="min-w-0">
+                <p className="break-words font-[family-name:var(--font-display)] text-3xl text-[var(--ink)]">
                   {saved.name}
                 </p>
                 <p className="mt-1 text-sm text-[var(--muted)]">
-                  {saved.gender} · {saved.looking.join(" · ")}
+                  {[saved.gender, ...saved.looking].join(" · ")}
                 </p>
-                <p className="mt-1 text-xs uppercase tracking-wide text-[var(--gold)]">
+                <p className="mt-1 truncate text-xs uppercase tracking-wide text-[var(--gold)]">
                   {PROVIDER_LABEL[session.provider]} · {session.detail}
                 </p>
               </div>
             </div>
             {saved.bio ? (
-              <p className="mt-6 text-base leading-7 text-[var(--muted)]">{saved.bio}</p>
+              <p className="mt-6 whitespace-pre-line break-words text-base leading-7 text-[var(--muted)]">
+                {saved.bio}
+              </p>
             ) : null}
             <div className="mt-8 flex flex-wrap gap-3">
               <button
@@ -275,5 +326,17 @@ export default function ProfilePage() {
         ) : null}
       </section>
     </AppShell>
+  );
+}
+
+function ProfileSkeleton() {
+  return (
+    <div className="mt-8 flex items-center gap-4" aria-busy="true" aria-label="Loading your profile">
+      <div className="h-24 w-24 shrink-0 animate-pulse rounded-full bg-white/5" />
+      <div className="flex-1 space-y-3">
+        <div className="h-6 w-40 animate-pulse rounded-full bg-white/5" />
+        <div className="h-4 w-56 animate-pulse rounded-full bg-white/5" />
+      </div>
+    </div>
   );
 }

@@ -1,17 +1,27 @@
 "use client";
 
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 const GATE_KEY = "simulust-age-ok";
 
+// Pages with no adult content that anyone must be able to read: the policies
+// people agree to, and the takedown form (someone reporting misuse of their
+// image may never have used the site).
+const OPEN_PATHS = ["/report", "/terms", "/privacy", "/content-policy", "/safety", "/dmca", "/2257"];
+
 export function AgeGate({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [remember, setRemember] = useState(true);
 
   useEffect(() => {
+    // Storage is only readable after mount.
     const saved =
       window.localStorage.getItem(GATE_KEY) === "1" ||
       window.sessionStorage.getItem(GATE_KEY) === "1";
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAllowed(saved);
   }, []);
 
@@ -26,9 +36,14 @@ export function AgeGate({ children }: { children: React.ReactNode }) {
     setAllowed(true);
   }
 
+  // Same tree either way, so moving between open and gated pages doesn't
+  // remount the app below.
+  const open = OPEN_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  const gate = open ? true : allowed;
+
   return (
     <>
-      {allowed === false ? (
+      {gate === false ? (
         <main className="relative min-h-dvh overflow-hidden bg-[var(--bg)] text-[var(--ink)]">
           <div className="pointer-events-none absolute inset-0" aria-hidden>
             <div className="age-gate-glow absolute -right-24 top-[-22%] h-[32rem] w-[48rem] rotate-[-16deg] bg-[radial-gradient(ellipse,rgba(198,161,91,0.12),transparent_70%)]" />
@@ -51,6 +66,10 @@ export function AgeGate({ children }: { children: React.ReactNode }) {
               </p>
               <p>This platform contains AI-generated adult content and intimate conversations.</p>
               <p>All characters are 18+ fictional personas.</p>
+              <p>
+                Explicit content also needs a one-time ID check. The law requires a real age check, not just this
+                click, before we can show it.
+              </p>
             </div>
             <label className="mt-8 flex cursor-pointer items-center gap-3 text-sm text-[var(--muted)]">
               <input
@@ -76,12 +95,25 @@ export function AgeGate({ children }: { children: React.ReactNode }) {
                 No, exit
               </a>
             </div>
+            <p className="mt-10 text-xs text-[var(--muted)]">
+              <Link href="/terms" className="underline underline-offset-2 hover:text-[var(--ink)]">
+                Terms
+              </Link>
+              {" · "}
+              <Link href="/privacy" className="underline underline-offset-2 hover:text-[var(--ink)]">
+                Privacy
+              </Link>
+              {" · "}
+              <Link href="/report" className="underline underline-offset-2 hover:text-[var(--ink)]">
+                Report content
+              </Link>
+            </p>
           </div>
         </main>
-      ) : allowed === null ? (
+      ) : gate === null ? (
         <main className="min-h-dvh bg-[var(--bg)]" />
       ) : null}
-      <div className={allowed === true ? "contents" : "hidden"}>{children}</div>
+      <div className={gate === true ? "contents" : "hidden"}>{children}</div>
     </>
   );
 }
