@@ -1,9 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { AppHeader, AppShell } from "@/components/app-shell";
+import Link from "next/link";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
+import {
+  ACCOUNT_PAGE,
+  AccountNav,
+  AgeStatusBadge,
+  Notice,
+  SectionCard,
+  SignInPrompt,
+  SkeletonCard,
+  fieldHint,
+  fieldLabel,
+} from "@/components/account/account-ui";
+import { PencilIcon } from "@/components/account/account-icons";
+import { ChevronRightIcon, CoinIcon, SignOutIcon, UserIcon } from "@/components/icons";
+import { PremiumIcon } from "@/components/premium-icon";
+import { Button, Chip, PageHeader, Panel, buttonClass, cx, inputClass } from "@/components/ui";
 import { ApiError, useApi } from "@/lib/api";
+import type { Me } from "@/lib/api-types";
+import type { Session } from "@/lib/session";
 
 type ProfileGender = "Woman" | "Man" | "Non-binary";
 type ProfileLane = "Girls" | "Anime" | "Guys";
@@ -128,124 +146,97 @@ export default function ProfilePage() {
     setEditing(false);
   }
 
-  return (
-    <AppShell>
-      <AppHeader />
-      <section className="mx-auto w-full max-w-xl px-4 py-10">
-        <h1 className="font-[family-name:var(--font-display)] text-4xl text-[var(--ink)]">
-          Profile
-        </h1>
-        {!ready ? (
-          <ProfileSkeleton />
-        ) : !session ? (
-          <div className="mt-8">
-            <p className="text-[var(--muted)]">Sign in to set up your profile.</p>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <button
-                type="button"
-                className="rounded-full border border-white/20 px-5 py-2.5 text-sm text-[var(--ink)]"
-                onClick={openLogin}
-              >
-                Login
-              </button>
-              <button
-                type="button"
-                className="rounded-full bg-[var(--gold)] px-5 py-2.5 text-sm font-medium !text-[#12110F]"
-                onClick={openSignup}
-              >
-                Sign up
-              </button>
-            </div>
-          </div>
-        ) : load.state === "loading" ? (
-          <ProfileSkeleton />
-        ) : load.state === "error" ? (
-          <div className="mt-8" role="alert">
-            <p className="text-[var(--muted)]">{load.message}</p>
-            <button
-              type="button"
-              className="mt-6 rounded-full border border-white/20 px-6 py-3 text-sm text-[var(--ink)]"
-              onClick={() => setAttempt((value) => value + 1)}
-            >
-              Try again
-            </button>
-          </div>
-        ) : editing ? (
+  let content: ReactNode;
+  if (!ready) {
+    content = <ProfileSkeleton />;
+  } else if (!session) {
+    content = (
+      <SignInPrompt
+        title="Sign in to set up your profile."
+        body="Characters remember the name you set here."
+        onLogin={openLogin}
+        onSignup={openSignup}
+      />
+    );
+  } else if (load.state === "loading") {
+    content = <ProfileSkeleton />;
+  } else if (load.state === "error") {
+    content = (
+      <Panel className="flex flex-col items-start gap-4 p-6" role="alert">
+        <p className="text-sm leading-6 text-[var(--muted)]">{load.message}</p>
+        <Button size="lg" onClick={() => setAttempt((value) => value + 1)}>
+          Try again
+        </Button>
+      </Panel>
+    );
+  } else {
+    content = (
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+        {editing ? (
           <form
-            className="mt-8 space-y-6"
+            className="space-y-6 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 sm:p-6"
             onSubmit={(event) => {
               event.preventDefault();
               void submit();
             }}
           >
-            <p className="text-[var(--muted)]">
-              This is you. Characters will remember the name you set here.
-            </p>
+            <div>
+              <h2 className="text-lg font-bold tracking-tight text-[var(--ink)]">
+                {saved ? "Edit profile" : "Set up your profile"}
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
+                This is you. Characters will remember the name you set here.
+              </p>
+            </div>
             <div className="flex items-center gap-4">
-              <div
-                aria-hidden
-                className="flex h-28 w-28 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/5 text-3xl text-[var(--muted)]"
-              >
-                {initialOf(form.name || session.display)}
-              </div>
+              <Avatar initial={initialOf(form.name || session.display)} size="md" />
               <p className="text-sm leading-6 text-[var(--muted)]">
                 We don&apos;t take photo uploads, so your initial stands in for a picture.
               </p>
             </div>
             <label className="block">
-              <span className="text-xs uppercase tracking-wide text-[var(--muted)]">Name</span>
+              <span className={fieldLabel}>Name</span>
               <input
                 value={form.name}
                 maxLength={NAME_MAX}
                 onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                className="mt-2 w-full rounded-2xl border border-[var(--line)] bg-transparent px-4 py-3 text-[var(--ink)] outline-none focus:border-[var(--gold)]"
+                className={cx(inputClass, "mt-2 h-11")}
                 required
               />
             </label>
             <fieldset>
-              <legend className="text-xs uppercase tracking-wide text-[var(--muted)]">I am</legend>
-              <div className="mt-2 flex flex-wrap gap-2">
+              <legend className={fieldLabel}>I am</legend>
+              <div className="no-scrollbar -mx-1 mt-2 flex gap-2 overflow-x-auto px-1">
                 {GENDERS.map((gender) => (
-                  <button
+                  <Chip
                     key={gender}
-                    type="button"
-                    aria-pressed={form.gender === gender}
-                    className={`rounded-full px-4 py-2 text-sm ${
-                      form.gender === gender
-                        ? "bg-[var(--gold)] !text-[#12110F]"
-                        : "border border-white/20 text-[var(--ink)]"
-                    }`}
+                    active={form.gender === gender}
                     onClick={() => setForm((current) => ({ ...current, gender }))}
                   >
                     {gender}
-                  </button>
+                  </Chip>
                 ))}
               </div>
             </fieldset>
             <fieldset>
-              <legend className="text-xs uppercase tracking-wide text-[var(--muted)]">Into</legend>
-              <div className="mt-2 flex flex-wrap gap-2">
+              <legend className={fieldLabel}>Into</legend>
+              <div className="no-scrollbar -mx-1 mt-2 flex gap-2 overflow-x-auto px-1">
                 {LANES.map((lane) => (
-                  <button
+                  <Chip
                     key={lane}
-                    type="button"
-                    aria-pressed={form.looking.includes(lane)}
-                    className={`rounded-full px-4 py-2 text-sm ${
-                      form.looking.includes(lane)
-                        ? "bg-[var(--gold)] !text-[#12110F]"
-                        : "border border-white/20 text-[var(--ink)]"
-                    }`}
+                    active={form.looking.includes(lane)}
                     onClick={() => toggleLane(lane)}
                   >
                     {lane}
-                  </button>
+                  </Chip>
                 ))}
               </div>
+              <span className={fieldHint}>Pick one or more.</span>
             </fieldset>
             <label className="block">
-              <span className="flex items-baseline justify-between text-xs uppercase tracking-wide text-[var(--muted)]">
+              <span className={cx(fieldLabel, "flex items-baseline justify-between")}>
                 About you
-                <span className="normal-case tracking-normal">
+                <span className="text-xs font-normal text-[var(--muted)]">
                   {form.bio.length}/{BIO_MAX}
                 </span>
               </span>
@@ -254,89 +245,194 @@ export default function ProfilePage() {
                 maxLength={BIO_MAX}
                 onChange={(event) => setForm((current) => ({ ...current, bio: event.target.value }))}
                 rows={4}
-                className="mt-2 w-full resize-none rounded-2xl border border-[var(--line)] bg-transparent px-4 py-3 text-[var(--ink)] outline-none focus:border-[var(--gold)]"
+                className={cx(inputClass, "mt-2 resize-none py-3 leading-6")}
                 placeholder="What should they know about you?"
               />
             </label>
             {saveError ? (
-              <p role="alert" className="text-sm text-red-400">
-                {saveError}
-              </p>
+              <Notice role="alert">{saveError}</Notice>
             ) : null}
             <div className="flex flex-wrap gap-3">
-              <button
-                type="submit"
-                disabled={saving || !form.name.trim()}
-                className="rounded-full bg-[var(--gold)] px-6 py-3 text-sm font-medium !text-[#12110F] disabled:opacity-60"
-              >
+              <button type="submit" disabled={saving || !form.name.trim()} className={buttonClass("primary", "lg")}>
                 {saving ? "Saving…" : "Save profile"}
               </button>
               {saved ? (
-                <button
-                  type="button"
-                  disabled={saving}
-                  className="rounded-full border border-white/20 px-6 py-3 text-sm text-[var(--ink)] disabled:opacity-60"
-                  onClick={cancelEdit}
-                >
+                <Button variant="secondary" size="lg" disabled={saving} onClick={cancelEdit}>
                   Cancel
-                </button>
+                </Button>
               ) : null}
             </div>
           </form>
         ) : saved ? (
-          <div className="mt-8">
-            <div className="flex items-center gap-4">
-              <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/5 text-3xl">
-                {initialOf(saved.name)}
+          <Panel className="overflow-hidden">
+            <div
+              aria-hidden
+              className="h-28 bg-[radial-gradient(120%_140%_at_0%_0%,rgba(255,79,139,0.55),transparent_60%),radial-gradient(90%_120%_at_100%_0%,rgba(255,122,166,0.25),transparent_65%)] sm:h-32"
+            />
+            <div className="px-5 pb-6 sm:px-6">
+              <div className="-mt-12 flex flex-wrap items-end justify-between gap-4">
+                <Avatar initial={initialOf(saved.name)} size="lg" />
+                <Button size="lg" onClick={() => setEditing(true)}>
+                  <PencilIcon className="h-4 w-4" />
+                  Edit profile
+                </Button>
               </div>
-              <div className="min-w-0">
-                <p className="break-words font-[family-name:var(--font-display)] text-3xl text-[var(--ink)]">
-                  {saved.name}
-                </p>
-                <p className="mt-1 text-sm text-[var(--muted)]">
-                  {[saved.gender, ...saved.looking].join(" · ")}
-                </p>
-                <p className="mt-1 truncate text-xs uppercase tracking-wide text-[var(--gold)]">
-                  {PROVIDER_LABEL[session.provider]} · {session.detail}
-                </p>
-              </div>
-            </div>
-            {saved.bio ? (
-              <p className="mt-6 whitespace-pre-line break-words text-base leading-7 text-[var(--muted)]">
-                {saved.bio}
+              <p className="mt-4 break-words text-2xl font-bold tracking-tight text-[var(--ink)] sm:text-3xl">
+                {saved.name}
               </p>
-            ) : null}
-            <div className="mt-8 flex flex-wrap gap-3">
-              <button
-                type="button"
-                className="rounded-full bg-[var(--gold)] px-6 py-3 text-sm font-medium !text-[#12110F]"
-                onClick={() => setEditing(true)}
-              >
-                Edit profile
-              </button>
-              <button
-                type="button"
-                className="rounded-full border border-white/20 px-6 py-3 text-sm text-[var(--ink)]"
-                onClick={signOut}
-              >
-                Logout
-              </button>
+              <dl className="mt-5 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl bg-[var(--surface-2)] px-4 py-3">
+                  <dt className="text-xs text-[var(--muted)]">I am</dt>
+                  <dd className="mt-0.5 font-semibold text-[var(--ink)]">{saved.gender}</dd>
+                </div>
+                <div className="rounded-xl bg-[var(--surface-2)] px-4 py-3">
+                  <dt className="text-xs text-[var(--muted)]">Into</dt>
+                  <dd className="mt-0.5 font-semibold text-[var(--ink)]">{saved.looking.join(", ")}</dd>
+                </div>
+              </dl>
+              <h3 className="mt-6 text-sm font-semibold text-[var(--ink)]">About you</h3>
+              {saved.bio ? (
+                <p className="mt-2 whitespace-pre-line break-words text-[15px] leading-7 text-[var(--muted)]">{saved.bio}</p>
+              ) : (
+                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                  Nothing here yet. Edit your profile to tell characters a little about you.
+                </p>
+              )}
             </div>
-          </div>
+          </Panel>
         ) : null}
-      </section>
+        <AccountCard session={session} me={me} onSignOut={signOut} />
+      </div>
+    );
+  }
+
+  return (
+    <AppShell>
+      <div className={ACCOUNT_PAGE}>
+        <PageHeader accent="My" title="Profile" subtitle="How characters see you, and the account behind it." />
+        <AccountNav className="mt-5" />
+        <div className="mt-6">{content}</div>
+      </div>
     </AppShell>
+  );
+}
+
+function Avatar({ initial, size }: { initial: string; size: "md" | "lg" }) {
+  return (
+    <div
+      aria-hidden
+      className={cx(
+        "flex shrink-0 items-center justify-center rounded-full bg-[var(--surface-2)] font-bold text-[var(--accent)] ring-2 ring-[var(--accent)]/60",
+        size === "lg" ? "h-24 w-24 text-4xl outline outline-4 outline-[var(--surface)]" : "h-20 w-20 text-3xl",
+      )}
+    >
+      {initial}
+    </div>
+  );
+}
+
+// Sign-in method, credits, plan and age check, with links to change each.
+function AccountCard({ session, me, onSignOut }: { session: Session; me: Me | null; onSignOut: () => void }) {
+  return (
+    <SectionCard title="Account" icon={<UserIcon />}>
+      <dl className="divide-y divide-[var(--line)] border-y border-[var(--line)]">
+        <AccountRow label="Signed in with">
+          <span className="font-semibold text-[var(--ink)]">{PROVIDER_LABEL[session.provider]}</span>
+          <span className="block break-all text-xs text-[var(--muted)]">{session.detail}</span>
+        </AccountRow>
+        {me ? (
+          <>
+            <AccountRow label="Credits" href="/premium" linkLabel="Buy credits" premium>
+              <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--ink)]">
+                <CoinIcon className="h-4 w-4 text-[var(--premium)]" />
+                {me.balance.toLocaleString()}
+              </span>
+            </AccountRow>
+            <AccountRow label="Plan" href="/premium" linkLabel={me.isMember ? "Manage" : "Go Premium"} premium>
+              {me.isMember ? (
+                <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--premium)]">
+                  <PremiumIcon className="h-4 w-4" />
+                  Premium
+                  {me.memberUntil ? (
+                    <span className="font-normal text-[var(--muted)]">
+                      until {new Date(me.memberUntil).toLocaleDateString(undefined, { dateStyle: "medium" })}
+                    </span>
+                  ) : null}
+                </span>
+              ) : (
+                <span className="font-semibold text-[var(--ink)]">Free</span>
+              )}
+            </AccountRow>
+            <AccountRow label="Age check" href="/verify" linkLabel={me.ageVerified ? "Details" : "Verify"}>
+              <AgeStatusBadge status={me.ageStatus} />
+            </AccountRow>
+          </>
+        ) : null}
+      </dl>
+      <div className="mt-5 flex flex-wrap gap-3">
+        <Link href="/settings" className={buttonClass("secondary", "md", "flex-1")}>
+          Settings
+        </Link>
+        <Button variant="secondary" className="flex-1" onClick={onSignOut}>
+          <SignOutIcon className="h-4 w-4" />
+          Log out
+        </Button>
+      </div>
+    </SectionCard>
+  );
+}
+
+function AccountRow({
+  label,
+  href,
+  linkLabel,
+  premium,
+  children,
+}: {
+  label: string;
+  href?: string;
+  linkLabel?: string;
+  // Credits and Premium links take the amber Premium colour.
+  premium?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-3 py-3">
+      <div className="min-w-0 flex-1">
+        <dt className="text-xs text-[var(--muted)]">{label}</dt>
+        <dd className="mt-1 text-sm">{children}</dd>
+      </div>
+      {href && linkLabel ? (
+        <Link
+          href={href}
+          className={cx(
+            "inline-flex h-10 shrink-0 items-center gap-0.5 rounded-full pl-3 pr-2 text-sm font-semibold",
+            premium ? "!text-[var(--premium)] hover:bg-[var(--premium)]/10" : "!text-[var(--accent)] hover:bg-[var(--accent-soft)]",
+          )}
+        >
+          {linkLabel}
+          <ChevronRightIcon className="h-4 w-4" />
+        </Link>
+      ) : null}
+    </div>
   );
 }
 
 function ProfileSkeleton() {
   return (
-    <div className="mt-8 flex items-center gap-4" aria-busy="true" aria-label="Loading your profile">
-      <div className="h-24 w-24 shrink-0 animate-pulse rounded-full bg-white/5" />
-      <div className="flex-1 space-y-3">
-        <div className="h-6 w-40 animate-pulse rounded-full bg-white/5" />
-        <div className="h-4 w-56 animate-pulse rounded-full bg-white/5" />
-      </div>
+    <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]" aria-busy="true" aria-label="Loading your profile">
+      <Panel className="overflow-hidden">
+        <div className="h-28 animate-pulse bg-white/[0.04] sm:h-32" />
+        <div className="px-5 pb-6 sm:px-6">
+          <div className="-mt-12 h-24 w-24 animate-pulse rounded-full bg-[var(--surface-2)] outline outline-4 outline-[var(--surface)]" />
+          <div className="mt-4 h-7 w-48 animate-pulse rounded-full bg-white/[0.06]" />
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="h-16 animate-pulse rounded-xl bg-white/[0.04]" />
+            <div className="h-16 animate-pulse rounded-xl bg-white/[0.04]" />
+          </div>
+        </div>
+      </Panel>
+      <SkeletonCard lines={4} />
     </div>
   );
 }

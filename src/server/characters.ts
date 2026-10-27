@@ -24,7 +24,8 @@ import {
   ROLES,
   STYLES,
 } from "@/lib/portrait-prompt";
-import { VOICES } from "@/server/tts";
+import { GIVEN_NAME, NAME_MAX, NAME_MESSAGES, tidyName } from "@/lib/names";
+import { VOICES } from "@/lib/voices";
 
 export function toCharacterDTO(row: CharacterRow): Character {
   return {
@@ -49,6 +50,7 @@ export function toCharacterDTO(row: CharacterRow): Character {
     occupation: row.occupation ?? undefined,
     kinks: row.kinks,
     voice: row.voice ?? undefined,
+    own: row.ownerId !== null,
   };
 }
 
@@ -80,22 +82,16 @@ export async function requireCharacter(userId: string | null, id: string) {
   return row;
 }
 
-// A given name: one to three words of letters (any script) with apostrophes,
-// hyphens or periods inside, like "Zoë", "D'Angelo", "Mary-Jane" or "J. Park".
-// No digits, brackets or commas, so "Yuki (17)" or "Yuki, 17" can't put an age
-// in the chat prompt; minor-coded words are the classifier's to catch.
-const GIVEN_NAME = /^\p{L}[\p{L}\p{M}'’.-]*(?: \p{L}[\p{L}\p{M}'’.-]*){0,2}$/u;
-
+// See src/lib/names.ts for the rule and why.
 const givenName = z
   .string()
-  .trim()
-  .transform((value) => value.replace(/\s+/g, " "))
+  .transform(tidyName)
   .pipe(
     z
       .string()
-      .min(1, "Add a name.")
-      .max(30, "Keep the name to 30 characters or fewer.")
-      .regex(GIVEN_NAME, "Use a first name, or first and last: letters only, up to three words."),
+      .min(1, NAME_MESSAGES.empty)
+      .max(NAME_MAX, NAME_MESSAGES.long)
+      .regex(GIVEN_NAME, NAME_MESSAGES.shape),
   );
 
 // Everything except the name comes from the creator's fixed lists. The look

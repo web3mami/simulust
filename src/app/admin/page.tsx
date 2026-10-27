@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AppHeader, AppShell } from "@/components/app-shell";
+import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
+import { Notice, solidDangerClass } from "@/components/account/account-ui";
+import { Chip, PageHeader, Panel, buttonClass, cx, inputClass } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import type {
   AdminMediaDTO,
@@ -35,11 +37,13 @@ const KIND_LABEL: Record<ReportKind, string> = {
   other: "Other",
 };
 
-const input =
-  "w-full rounded-2xl border border-[var(--line)] bg-transparent px-4 py-2.5 text-sm text-[var(--ink)] outline-none placeholder:text-[var(--muted)]/60 focus:border-[var(--gold)]";
-const ghost = "rounded-full border border-white/20 px-4 py-2 text-sm text-[var(--ink)] hover:bg-white/5 disabled:opacity-50";
-const primary = "rounded-full bg-[var(--gold)] px-4 py-2 text-sm font-medium !text-[#12110F] disabled:opacity-50";
-const danger = "rounded-full bg-red-500/90 px-4 py-2 text-sm font-medium text-white disabled:opacity-50";
+const input = inputClass;
+// Links get `!` so the colour beats the global `a { color: inherit }`.
+const ghost = buttonClass("secondary", "md", "!text-[var(--ink)]");
+const primary = buttonClass("primary", "md");
+const danger = solidDangerClass("md");
+const card = "rounded-2xl border p-5";
+const pill = "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold";
 
 function when(iso: string) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -98,32 +102,36 @@ export default function AdminPage() {
 
   return (
     <AppShell>
-      <AppHeader />
-      <section className="mx-auto w-full max-w-5xl px-4 py-10">
-        <h1 className="font-[family-name:var(--font-display)] text-4xl text-[var(--ink)]">Trust &amp; safety</h1>
+      <section className="mx-auto w-full max-w-6xl px-4 pb-12 pt-6 sm:px-6 sm:pt-8 lg:px-8">
+        <PageHeader accent="Trust" title="& safety" subtitle="Reports, the safety queue, users and generated media." />
         {!ready || (session && !me) ? (
           <p className="mt-8 text-sm text-[var(--muted)]">Loading…</p>
         ) : !me?.isAdmin ? (
-          <p className="mt-8 text-[var(--muted)]">This page is for Simulust admins. Sign in with an admin account.</p>
+          <Panel className="mt-8 p-6">
+            <p className="text-[var(--muted)]">This page is for Simulust admins. Sign in with an admin account.</p>
+          </Panel>
         ) : (
           <>
-            <div className="mt-6 flex flex-wrap gap-2" role="tablist">
+            <div className="no-scrollbar -mx-4 mt-6 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:px-0" role="tablist">
               {TABS.map((item) => (
                 <button
                   key={item.id}
                   type="button"
                   role="tab"
                   aria-selected={tab === item.id}
-                  className={`rounded-full px-4 py-2 text-sm ${
-                    tab === item.id ? "bg-[var(--gold)] !text-[#12110F]" : "border border-white/20 text-[var(--ink)]"
-                  }`}
+                  className={cx(
+                    "inline-flex h-10 shrink-0 items-center rounded-full px-4 text-sm font-semibold transition-colors",
+                    tab === item.id
+                      ? "bg-[var(--accent)] text-[var(--accent-ink)]"
+                      : "border border-[var(--line)] bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--ink)]",
+                  )}
                   onClick={() => setTab(item.id)}
                 >
                   {item.label}
                 </button>
               ))}
             </div>
-            <div className="mt-8">
+            <div className="mt-6">
               {tab === "reports" ? <ReportsTab /> : null}
               {tab === "queue" ? (
                 <QueueTab
@@ -146,9 +154,9 @@ export default function AdminPage() {
 function ListState({ loading, error, empty, onRetry }: { loading: boolean; error: string | null; empty: boolean; onRetry: () => void }) {
   if (error) {
     return (
-      <div className="rounded-2xl border border-red-400/30 bg-red-500/5 p-4 text-sm text-red-300">
+      <div className="rounded-2xl border border-red-500/35 bg-red-500/10 p-4 text-sm text-red-200">
         {error}{" "}
-        <button type="button" className="underline underline-offset-2" onClick={onRetry}>
+        <button type="button" className="font-semibold underline underline-offset-2" onClick={onRetry}>
           Try again
         </button>
       </div>
@@ -169,16 +177,11 @@ function ReportsTab() {
     <div>
       <div className="flex items-center gap-2">
         {(["open", "resolved"] as const).map((option) => (
-          <button
-            key={option}
-            type="button"
-            className={`rounded-full px-3 py-1.5 text-xs ${view === option ? "bg-white/10 text-[var(--ink)]" : "text-[var(--muted)]"}`}
-            onClick={() => setView(option)}
-          >
+          <Chip key={option} active={view === option} onClick={() => setView(option)}>
             {option === "open" ? "Open" : "Resolved"}
-          </button>
+          </Chip>
         ))}
-        <button type="button" className="ml-auto text-xs text-[var(--muted)] underline underline-offset-2" onClick={() => void list.reload()}>
+        <button type="button" className={buttonClass("ghost", "md", "ml-auto")} onClick={() => void list.reload()}>
           Refresh
         </button>
       </div>
@@ -290,14 +293,10 @@ function ReportCard({
 
   return (
     <article
-      className={`rounded-3xl border p-5 ${
-        report.overdue ? "border-red-400/60 bg-red-500/10" : "border-[var(--line)] bg-[var(--bg-2)]"
-      }`}
+      className={cx(card, report.overdue ? "border-red-400/60 bg-red-500/10" : "border-[var(--line)] bg-[var(--surface)]")}
     >
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span
-          className={`rounded-full px-2.5 py-1 ${urgent ? "bg-red-500/20 text-red-200" : "bg-white/10 text-[var(--ink)]"}`}
-        >
+        <span className={cx(pill, urgent ? "bg-red-500/20 text-red-200" : "bg-white/10 text-[var(--ink)]")}>
           {KIND_LABEL[report.kind]}
         </span>
         {open ? (
@@ -312,7 +311,7 @@ function ReportCard({
         <span className="ml-auto text-[var(--muted)]">Filed {when(report.createdAt)}</span>
       </div>
 
-      <p className="mt-3 break-all text-sm text-[var(--ink)]">{report.target}</p>
+      <p className="mt-3 break-all text-sm font-semibold text-[var(--ink)]">{report.target}</p>
       <p className="mt-1 text-xs text-[var(--muted)]">
         {target
           ? target.type === "media"
@@ -321,7 +320,12 @@ function ReportCard({
           : "Couldn't match this to a media id or character. Find it by hand."}
       </p>
       {target?.type === "media" ? (
-        <a href={`/api/media/${target.id}`} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[var(--gold)] underline underline-offset-2">
+        <a
+          href={`/api/media/${target.id}`}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1 inline-block text-xs font-semibold !text-[var(--accent)] underline underline-offset-2"
+        >
           View media
         </a>
       ) : null}
@@ -339,7 +343,7 @@ function ReportCard({
       ) : null}
 
       {report.kind === "csam" && open ? (
-        <p className="mt-3 rounded-2xl border border-red-400/40 bg-red-500/10 p-3 text-xs leading-5 text-red-200">
+        <p className="mt-3 rounded-xl border border-red-400/40 bg-red-500/10 p-3 text-xs leading-5 text-red-200">
           If this is apparent CSAM: take it down with the files kept, ban the owner, and file a CyberTipline report
           with NCMEC (report.cybertip.org) as soon as possible. Kept files are blocked and held for one year instead of
           being deleted, as federal law requires. Don&apos;t download or share them.
@@ -354,7 +358,7 @@ function ReportCard({
             rows={2}
             maxLength={2000}
             placeholder="Resolution note: what you found and what you did"
-            className={input}
+            className={cx(input, "resize-y py-3 leading-6")}
           />
           {canTakeDown && report.preserveScope === "flagged" ? (
             <p className="text-xs leading-5 text-[var(--muted)]">
@@ -369,7 +373,7 @@ function ReportCard({
                 type="checkbox"
                 checked={preserve}
                 onChange={(event) => setPreserve(event.target.checked)}
-                className="mt-1 accent-[var(--gold)]"
+                className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent)]"
               />
               <span>
                 <span className="text-[var(--ink)]">Keep the files under legal hold</span> (blocked, not deleted, for one
@@ -407,8 +411,16 @@ function ReportCard({
       ) : report.resolution ? (
         <p className="mt-3 text-sm text-[var(--ink)]">{report.resolution}</p>
       ) : null}
-      {outcome ? <p className="mt-2 text-sm font-medium text-[var(--ink)]">{outcome}</p> : null}
-      {error ? <p className="mt-3 text-sm text-red-300">{error}</p> : null}
+      {outcome ? (
+        <Notice tone="info" role="status" className="mt-3">
+          {outcome}
+        </Notice>
+      ) : null}
+      {error ? (
+        <Notice role="alert" className="mt-3">
+          {error}
+        </Notice>
+      ) : null}
     </article>
   );
 }
@@ -453,21 +465,23 @@ function QueueTab({ onOpenUser }: { onOpenUser: (userId: string) => void }) {
           Mark all shown as reviewed
         </button>
       </div>
-      {error ? <p className="mt-3 text-sm text-red-300">{error}</p> : null}
+      {error ? (
+        <Notice role="alert" className="mt-3">
+          {error}
+        </Notice>
+      ) : null}
       <div className="mt-4 space-y-3">
         <ListState loading={list.loading} error={list.error} empty={!list.items} onRetry={() => void list.reload()} />
         {list.items && !events.length ? <p className="text-sm text-[var(--muted)]">The queue is empty.</p> : null}
         {events.map((event) => (
-          <article key={event.id} className="rounded-3xl border border-[var(--line)] bg-[var(--bg-2)] p-5">
+          <article key={event.id} className={cx(card, "border-[var(--line)] bg-[var(--surface)]")}>
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span
-                className={`rounded-full px-2.5 py-1 ${
-                  event.action === "blocked" ? "bg-red-500/20 text-red-200" : "bg-[var(--gold)]/20 text-[var(--gold)]"
-                }`}
+                className={cx(pill, event.action === "blocked" ? "bg-red-500/20 text-red-200" : "bg-[var(--accent-soft)] text-[var(--accent)]")}
               >
                 {event.action}
               </span>
-              <span className="rounded-full bg-white/10 px-2.5 py-1 text-[var(--ink)]">{event.category}</span>
+              <span className={cx(pill, "bg-white/10 text-[var(--ink)]")}>{event.category}</span>
               <span className="text-[var(--muted)]">
                 {event.targetType}
                 {event.targetId ? ` · ${event.targetId}` : ""}
@@ -478,7 +492,7 @@ function QueueTab({ onOpenUser }: { onOpenUser: (userId: string) => void }) {
               {event.userId ? `${event.userName ?? "Unknown"} · ${event.userId}` : "No user"}
             </p>
             {event.details ? (
-              <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-black/30 p-3 text-xs text-[var(--muted)]">
+              <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-[var(--bg)] p-3 text-xs text-[var(--muted)]">
                 {JSON.stringify(event.details, null, 2)}
               </pre>
             ) : null}
@@ -524,7 +538,7 @@ function UsersTab({ initialQuery }: { initialQuery: string }) {
   return (
     <div>
       <form
-        className="flex gap-2"
+        className="flex flex-col gap-2 sm:flex-row"
         onSubmit={(event) => {
           event.preventDefault();
           setSubmitted(query.trim());
@@ -534,7 +548,7 @@ function UsersTab({ initialQuery }: { initialQuery: string }) {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="User id, login id or display name"
-          className={input}
+          className={cx(input, "h-10")}
         />
         <button type="submit" className={primary}>
           Search
@@ -581,13 +595,13 @@ function UserRow({ user, onChange }: { user: AdminUserDTO; onChange: (user: Admi
 
   return (
     <article
-      className={`rounded-3xl border p-5 ${user.bannedAt ? "border-red-400/40 bg-red-500/5" : "border-[var(--line)] bg-[var(--bg-2)]"}`}
+      className={cx(card, user.bannedAt ? "border-red-400/40 bg-red-500/5" : "border-[var(--line)] bg-[var(--surface)]")}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-[var(--ink)]">{user.displayName}</p>
-        {user.isAdmin ? <span className="rounded-full bg-[var(--gold)]/20 px-2 py-0.5 text-xs text-[var(--gold)]">admin</span> : null}
-        {user.bannedAt ? <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-200">banned {when(user.bannedAt)}</span> : null}
-        {user.ageLocked ? <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-200">age check: under 18</span> : null}
+        <p className="font-semibold text-[var(--ink)]">{user.displayName}</p>
+        {user.isAdmin ? <span className={cx(pill, "bg-[var(--accent-soft)] text-[var(--accent)]")}>admin</span> : null}
+        {user.bannedAt ? <span className={cx(pill, "bg-red-500/20 text-red-200")}>banned {when(user.bannedAt)}</span> : null}
+        {user.ageLocked ? <span className={cx(pill, "bg-red-500/20 text-red-200")}>age check: under 18</span> : null}
       </div>
       <p className="mt-1 break-all text-xs text-[var(--muted)]">
         {user.id} · {user.privyId}
@@ -615,7 +629,7 @@ function UserRow({ user, onChange }: { user: AdminUserDTO; onChange: (user: Admi
                 onChange={(event) => setReason(event.target.value)}
                 placeholder="Reason (kept in the audit log)"
                 maxLength={500}
-                className={`${input} max-w-sm`}
+                className={cx(input, "h-10 sm:max-w-sm")}
               />
               <button type="button" disabled={busy} className={danger} onClick={() => void setBan(true)}>
                 Ban
@@ -624,7 +638,11 @@ function UserRow({ user, onChange }: { user: AdminUserDTO; onChange: (user: Admi
           )}
         </div>
       ) : null}
-      {error ? <p className="mt-3 text-sm text-red-300">{error}</p> : null}
+      {error ? (
+        <Notice role="alert" className="mt-3">
+          {error}
+        </Notice>
+      ) : null}
     </article>
   );
 }
@@ -640,16 +658,11 @@ function MediaTab() {
     <div>
       <div className="flex flex-wrap items-center gap-2">
         {(["", "blocked", "ready", "failed", "pending"] as const).map((option) => (
-          <button
-            key={option || "all"}
-            type="button"
-            className={`rounded-full px-3 py-1.5 text-xs ${status === option ? "bg-white/10 text-[var(--ink)]" : "text-[var(--muted)]"}`}
-            onClick={() => setStatus(option)}
-          >
+          <Chip key={option || "all"} active={status === option} className="capitalize" onClick={() => setStatus(option)}>
             {option || "All"}
-          </button>
+          </Chip>
         ))}
-        <button type="button" className="ml-auto text-xs text-[var(--muted)] underline underline-offset-2" onClick={() => void list.reload()}>
+        <button type="button" className={buttonClass("ghost", "md", "ml-auto")} onClick={() => void list.reload()}>
           Refresh
         </button>
       </div>
@@ -658,10 +671,10 @@ function MediaTab() {
         {list.items && !media.length ? <p className="text-sm text-[var(--muted)]">No generated media yet.</p> : null}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {media.map((item) => (
-            <article key={item.id} className="overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--bg-2)]">
+            <article key={item.id} className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
               <MediaThumb item={item} />
               <div className="p-4 text-xs text-[var(--muted)]">
-                <p className="text-[var(--ink)]">
+                <p className="font-semibold text-[var(--ink)]">
                   {item.kind} · {item.purpose} ·{" "}
                   <span className={item.status === "blocked" ? "text-red-300" : ""}>{item.status}</span>
                 </p>
@@ -673,7 +686,7 @@ function MediaTab() {
                 {item.moderation ? (
                   <details className="mt-2">
                     <summary className="cursor-pointer text-[var(--ink)]">Moderation result</summary>
-                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-black/30 p-2">
+                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-[var(--bg)] p-2">
                       {JSON.stringify(item.moderation, null, 2)}
                     </pre>
                   </details>
@@ -719,10 +732,10 @@ function MediaThumb({ item }: { item: AdminMediaDTO }) {
       {shown ? null : (
         <button
           type="button"
-          className="absolute inset-0 flex items-center justify-center bg-black/30 text-xs text-[var(--ink)]"
+          className="absolute inset-0 flex items-center justify-center bg-black/30"
           onClick={() => setShown(true)}
         >
-          Show {item.kind}
+          <span className={buttonClass("secondary", "sm", "pointer-events-none")}>Show {item.kind}</span>
         </button>
       )}
     </div>

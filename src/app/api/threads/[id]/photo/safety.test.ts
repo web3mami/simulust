@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { MessageDTO } from "@/lib/api-types";
+import { hasPython } from "@/test/python";
 
 // The scene model is scripted per test; images are the offline mock SVGs.
 vi.mock("@/server/llm", async (importOriginal) => {
@@ -281,7 +282,7 @@ describe("words that are fine in chat but never in a photo", () => {
 });
 
 // The real worker screen (workers/media/safety.py), when Python is here.
-const python = spawnSync("python3", ["-c", "import sys; assert sys.version_info >= (3, 9)"]).status === 0;
+const python = hasPython();
 const WORKER_SCREEN = String.raw`
 import importlib.util, sys, types
 for name in ("numpy", "PIL", "PIL.Image"):

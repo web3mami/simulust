@@ -1,30 +1,12 @@
 import "server-only";
+import { VOICES, type Voice, type VoiceGender } from "@/lib/voices";
 import { env, features } from "@/server/env";
 
 // Voice notes are spoken by a self-hosted Kokoro-FastAPI server (workers/tts),
 // which speaks the OpenAI audio API. Hosted TTS vendors don't clearly allow
 // erotic audio, so there is no hosted fallback.
 
-export type VoiceGender = "female" | "male";
-
-export type Voice = {
-  label: string;
-  id: string;
-  gender: VoiceGender;
-  description: string;
-};
-
-// The best-graded American English Kokoro-82M voices of each gender.
-// Grades: https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
-// The labels are what the character creator saves in characters.voice.
-export const VOICES: readonly Voice[] = [
-  { label: "Voice 1", id: "af_heart", gender: "female", description: "Warm" },
-  { label: "Voice 2", id: "af_bella", gender: "female", description: "Bright" },
-  { label: "Voice 3", id: "af_nicole", gender: "female", description: "Soft, close" },
-  { label: "Voice 4", id: "am_michael", gender: "male", description: "Low, steady" },
-  { label: "Voice 5", id: "am_fenrir", gender: "male", description: "Rough" },
-  { label: "Voice 6", id: "am_puck", gender: "male", description: "Playful" },
-];
+export { VOICES };
 
 const BY_GENDER: Record<VoiceGender, Voice[]> = {
   female: VOICES.filter((voice) => voice.gender === "female"),

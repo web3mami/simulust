@@ -1,16 +1,11 @@
 import type { Metadata } from "next";
-import { Fraunces, Outfit } from "next/font/google";
+import { Outfit } from "next/font/google";
 import { AgeGate } from "@/components/age-gate";
 import { AuthProvider } from "@/components/auth-gate";
 import { PrivyApp } from "@/components/privy-app";
 import "./globals.css";
 
-const display = Fraunces({
-  subsets: ["latin"],
-  variable: "--font-display",
-  display: "swap",
-});
-
+// One geometric sans for everything; headings are just heavier.
 const sans = Outfit({
   subsets: ["latin"],
   variable: "--font-sans",
@@ -24,7 +19,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${display.variable} ${sans.variable} h-full`}>
+    <html lang="en" className={`${sans.variable} h-full`}>
       <body className="min-h-full font-sans">
         <PrivyApp>
           <AgeGate>

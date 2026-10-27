@@ -1,139 +1,70 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #12110f;
-  --bg-2: #1b1916;
-  --ink: #f3efe6;
-  --muted: #b8b0a2;
-  --line: #2c2924;
-  --accent: #c6a15b;
-  --gold: #c6a15b;
-  --accent-2: #c6a15b;
-  --background: #12110f;
-  --foreground: #f3efe6;
+  /* Near-black surfaces, one pink accent, amber only for Premium. */
+  --bg: #0d0d10;
+  --bg-2: #141418;
+  --surface: #1b1b20;
+  --surface-2: #24242b;
+  --ink: #f6f6f8;
+  --muted: #a1a1ab;
+  --line: #2a2a32;
+  --accent: #ff4f8b;
+  --accent-2: #ff7aa6;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(255, 79, 139, 0.14);
+  --premium: #f4b740;
+  --premium-2: #ff8a3d;
+  /* Older screens name the accent "gold". */
+  --gold: var(--accent);
+  --background: var(--bg);
+  --foreground: var(--ink);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --color-white: #f3efe6;
+  --color-white: #f6f6f8;
   --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-display), ui-serif, Georgia, serif;
+  --font-display: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
-html,
-body {
-  min-height: 100%;
-  background: var(--bg);
-  color: var(--ink);
-}
-
-body {
-  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-  letter-spacing: 0.01em;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-button,
-input {
-  font: inherit;
-}
-
-@keyframes portrait-sway {
-  from {
-    transform: scale(1.08) translate3d(2.4%, 0.8%, 0) rotate(1.1deg);
+/* Inside the base layer so Tailwind's utilities (text colour, underline on a
+   link) always win over these defaults. */
+@layer base {
+  html,
+  body {
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--ink);
   }
-  to {
-    transform: scale(1.1) translate3d(-2.4%, -1%, 0) rotate(-1.1deg);
+
+  body {
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: 0.005em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button,
+  input {
+    font: inherit;
   }
 }
 
-.portrait-sway {
-  animation: portrait-sway 8s ease-in-out infinite alternate;
-  transform-origin: 50% 72%;
+/* Horizontal rows of cards and chips scroll without a visible bar. */
+.no-scrollbar {
+  scrollbar-width: none;
 }
 
-@keyframes age-glow {
-  0% {
-    transform: translate3d(6%, -4%, 0) scale(1);
-    opacity: 0.7;
-  }
-  50% {
-    transform: translate3d(-8%, 6%, 0) scale(1.18);
-    opacity: 1;
-  }
-  100% {
-    transform: translate3d(6%, -4%, 0) scale(1);
-    opacity: 0.7;
-  }
-}
-
-.age-gate-glow {
-  animation: age-glow 22s ease-in-out infinite;
-}
-
-.age-gate-glow-lag {
-  animation: age-glow 28s ease-in-out infinite reverse;
-}
-
-.age-gate-vignette {
-  box-shadow: inset 0 0 160px 48px #12110f;
-}
-
-@keyframes create-dock-float {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0);
-  }
-  50% {
-    transform: translate3d(0, -4px, 0);
-  }
-}
-
-@keyframes create-dock-ring {
-  0% {
-    transform: scale(1);
-    opacity: 0.5;
-  }
-  70% {
-    transform: scale(1.55);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(1.55);
-    opacity: 0;
-  }
-}
-
-.create-dock {
-  animation: create-dock-float 2.8s ease-in-out infinite;
-}
-
-.create-dock-ring {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: 3.5rem;
-  height: 3.5rem;
-  margin-left: -1.75rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--gold) 45%, transparent);
-  animation: create-dock-ring 2.8s ease-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .age-gate-glow,
-  .age-gate-glow-lag,
-  .create-dock,
-  .create-dock-ring {
-    animation: none;
-  }
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }

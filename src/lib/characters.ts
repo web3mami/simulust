@@ -22,6 +22,9 @@ export type Character = {
   occupation?: string;
   kinks?: string[];
   voice?: string;
+  // Made by the signed-in user (the API only ever returns official characters
+  // and the user's own).
+  own?: boolean;
 };
 
 const CHARACTERS: Character[] = [

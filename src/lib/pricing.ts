@@ -56,11 +56,12 @@ export const MEMBERSHIP: Product = {
   credits: 400,
   memberDays: 30,
   tag: "30 days, prepaid",
+  // Only what membership really adds: free users get the same memory and
+  // replies, and credits never expire for anyone.
   perks: [
-    "Unlimited messages",
+    "Unlimited messages (fair use)",
     "400 credits for photos, voice and video",
-    "Full memory, always",
-    "Priority replies",
+    "No daily message limit to watch",
     "No auto-renew. Top up when you want.",
   ],
   featured: true,

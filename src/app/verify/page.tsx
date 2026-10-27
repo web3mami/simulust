@@ -1,9 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { AppHeader, AppShell } from "@/components/app-shell";
+import { useEffect, useState, type ReactNode } from "react";
+import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
+import {
+  ACCOUNT_PAGE,
+  AccountNav,
+  AgeStatusBadge,
+  Notice,
+  SectionCard,
+  SignInPrompt,
+  SkeletonCard,
+} from "@/components/account/account-ui";
+import { CheckIcon, EyeOffIcon, IdCardIcon } from "@/components/account/account-icons";
+import { Button, PageHeader, Panel, SectionTitle, buttonClass, cx } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import type { AgeStatus, Me } from "@/lib/api-types";
 
@@ -81,146 +92,163 @@ export default function VerifyPage() {
   const mode = features?.ageVerification ?? null;
   const status = me ? STATUS[me.ageStatus] : null;
 
-  return (
-    <AppShell>
-      <AppHeader />
-      <section className="mx-auto w-full max-w-xl px-4 py-10">
-        <h1 className="font-[family-name:var(--font-display)] text-4xl text-[var(--ink)]">Verify your age</h1>
-        <p className="mt-4 leading-7 text-[var(--muted)]">
-          The law in many places now requires a real age check, not just a click, before a site can show explicit
-          content. So before we unlock explicit chat, photos, voice notes and video, we ask for a one-time check.
-        </p>
+  // How far along the three steps below this account is.
+  const stepsDone = me?.ageStatus === "approved" ? 3 : me?.ageStatus === "pending" ? 2 : 0;
 
-        <div className="mt-8 rounded-3xl border border-[var(--line)] bg-[var(--bg-2)] p-6">
-          {suspended ? (
-            <p className="text-sm text-[var(--muted)]">This account is suspended, so it can&apos;t start an age check.</p>
-          ) : !ready || !features || (session && !me) ? (
-            <p className="text-sm text-[var(--muted)]">Loading…</p>
-          ) : !me ? (
-            <div>
-              <p className="text-[var(--ink)]">Sign in to verify your age.</p>
-              <div className="mt-5 flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  className="rounded-full border border-white/20 px-5 py-2.5 text-sm text-[var(--ink)]"
-                  onClick={openLogin}
-                >
-                  Login
-                </button>
-                <button
-                  type="button"
-                  className="rounded-full bg-[var(--gold)] px-5 py-2.5 text-sm font-medium !text-[#12110F]"
-                  onClick={openSignup}
-                >
-                  Sign up
-                </button>
+  let card: ReactNode;
+  if (suspended) {
+    card = (
+      <Panel className="p-6">
+        <p className="text-sm text-[var(--muted)]">This account is suspended, so it can&apos;t start an age check.</p>
+      </Panel>
+    );
+  } else if (!ready || !features || (session && !me)) {
+    card = <SkeletonCard lines={3} label="Loading…" />;
+  } else if (!me) {
+    card = (
+      <SignInPrompt
+        title="Sign in to verify your age."
+        body="It's a one-time check, and it unlocks explicit chat, photos, voice notes and video."
+        onLogin={openLogin}
+        onSignup={openSignup}
+      />
+    );
+  } else {
+    card = (
+      <Panel className="overflow-hidden">
+        <div className="flex items-start gap-4 p-5 sm:p-6">
+          <span
+            aria-hidden
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent)]"
+          >
+            <IdCardIcon className="h-6 w-6" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <h2 className="text-xl font-bold tracking-tight text-[var(--ink)]">One-time ID check</h2>
+              <p>
+                <span className="sr-only">Your status: </span>
+                <AgeStatusBadge status={me.ageStatus} label={status?.label} />
+              </p>
+            </div>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--muted)]">
+              {returned && me.ageStatus === "pending"
+                ? "Thanks. Your check is submitted and we're waiting for the result. You can leave this page; we'll update your account when it's in."
+                : status?.detail}
+            </p>
+          </div>
+        </div>
+
+        <div className="border-t border-[var(--line)] bg-[var(--bg-2)]/60 p-5 sm:p-6">
+          {me.ageStatus === "approved" ? (
+            <Link href="/settings" className={buttonClass("primary", "lg")}>
+              Go to settings
+            </Link>
+          ) : mode === "veriff" ? (
+            <Button size="lg" disabled={busy} onClick={start}>
+              {busy
+                ? "Opening Veriff…"
+                : me.ageStatus === "pending"
+                  ? "Start a new check"
+                  : me.ageStatus === "declined"
+                    ? "Try again"
+                    : "Start verification"}
+            </Button>
+          ) : mode === "dev" ? (
+            <div className="rounded-2xl border border-dashed border-[var(--premium)]/50 bg-[var(--premium)]/5 p-4">
+              <p className="text-sm font-semibold text-[var(--premium)]">Development mode: Veriff isn&apos;t configured.</p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <Button disabled={busy} onClick={() => devOutcome("approved")}>
+                  Approve (dev)
+                </Button>
+                <Button variant="secondary" disabled={busy} onClick={() => devOutcome("declined")}>
+                  Decline (dev)
+                </Button>
               </div>
             </div>
           ) : (
-            <div>
-              <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Your status</p>
-              <p className="mt-2 flex items-center gap-2 text-xl text-[var(--ink)]">
-                <span
-                  aria-hidden
-                  className={`h-2.5 w-2.5 rounded-full ${
-                    me.ageStatus === "approved"
-                      ? "bg-emerald-400"
-                      : me.ageStatus === "declined"
-                        ? "bg-red-400"
-                        : me.ageStatus === "pending"
-                          ? "animate-pulse bg-[var(--gold)]"
-                          : "bg-white/30"
-                  }`}
-                />
-                {status?.label}
-              </p>
-              <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                {returned && me.ageStatus === "pending"
-                  ? "Thanks. Your check is submitted and we're waiting for the result. You can leave this page; we'll update your account when it's in."
-                  : status?.detail}
-              </p>
-
-              {me.ageStatus === "approved" ? (
-                <Link
-                  href="/settings"
-                  className="mt-5 inline-block rounded-full bg-[var(--gold)] px-6 py-3 text-sm font-medium !text-[#12110F]"
-                >
-                  Go to settings
-                </Link>
-              ) : mode === "veriff" ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="mt-5 rounded-full bg-[var(--gold)] px-6 py-3 text-sm font-medium !text-[#12110F] disabled:opacity-60"
-                  onClick={start}
-                >
-                  {busy
-                    ? "Opening Veriff…"
-                    : me.ageStatus === "pending"
-                      ? "Start a new check"
-                      : me.ageStatus === "declined"
-                        ? "Try again"
-                        : "Start verification"}
-                </button>
-              ) : mode === "dev" ? (
-                <div className="mt-5 rounded-2xl border border-dashed border-[var(--gold)]/50 p-4">
-                  <p className="text-sm text-[var(--gold)]">Development mode: Veriff isn&apos;t configured.</p>
-                  <div className="mt-3 flex flex-wrap gap-3">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      className="rounded-full bg-[var(--gold)] px-5 py-2.5 text-sm font-medium !text-[#12110F] disabled:opacity-60"
-                      onClick={() => devOutcome("approved")}
-                    >
-                      Approve (dev)
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      className="rounded-full border border-white/20 px-5 py-2.5 text-sm text-[var(--ink)] disabled:opacity-60"
-                      onClick={() => devOutcome("declined")}
-                    >
-                      Decline (dev)
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <p className="mt-5 text-sm text-[var(--muted)]">
-                  Age verification isn&apos;t available right now. Check back soon.
-                </p>
-              )}
-              {mode === "dev" && me.ageStatus === "approved" ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="mt-3 block text-xs text-[var(--muted)] underline underline-offset-2"
-                  onClick={() => devOutcome("declined")}
-                >
-                  Reset to declined (dev)
-                </button>
-              ) : null}
-              {error ? <p className="mt-4 text-sm text-red-300">{error}</p> : null}
-            </div>
+            <p className="text-sm text-[var(--muted)]">Age verification isn&apos;t available right now. Check back soon.</p>
           )}
+          {mode === "dev" && me.ageStatus === "approved" ? (
+            <button
+              type="button"
+              disabled={busy}
+              className="mt-3 block min-h-10 text-xs text-[var(--muted)] underline underline-offset-2 hover:text-[var(--ink)]"
+              onClick={() => devOutcome("declined")}
+            >
+              Reset to declined (dev)
+            </button>
+          ) : null}
+          {error ? (
+            <Notice role="alert" className="mt-4">
+              {error}
+            </Notice>
+          ) : null}
         </div>
+      </Panel>
+    );
+  }
 
-        <h2 className="mt-10 font-[family-name:var(--font-display)] text-2xl text-[var(--ink)]">How it works</h2>
-        <ol className="mt-3 list-decimal space-y-2 pl-5 leading-7 text-[var(--muted)]">
-          <li>We send you to Veriff, an identity verification company.</li>
-          <li>You take a photo of a government ID and a short selfie video. It takes about two minutes.</li>
-          <li>Veriff tells us whether you passed, and you come back here.</li>
-        </ol>
-
-        <h2 className="mt-10 font-[family-name:var(--font-display)] text-2xl text-[var(--ink)]">What we keep</h2>
-        <p className="mt-3 leading-7 text-[var(--muted)]">
-          Only the result: passed or not, and when. We never store your ID, your selfie, your name or your date of
-          birth. Veriff handles those under its own privacy policy and retention rules. See our{" "}
-          <Link href="/privacy" className="text-[var(--gold)] underline underline-offset-2">
-            privacy policy
-          </Link>{" "}
-          for details.
-        </p>
-      </section>
+  return (
+    <AppShell>
+      <div className={ACCOUNT_PAGE}>
+        <PageHeader
+          accent="Verify"
+          title="your age"
+          subtitle="The law in many places now requires a real age check, not just a click, before a site can show explicit content. So before we unlock explicit chat, photos, voice notes and video, we ask for a one-time check."
+        />
+        <AccountNav className="mt-5" />
+        <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="min-w-0 space-y-8">
+            {card}
+            <section>
+              <SectionTitle accent="How">it works</SectionTitle>
+              <ol className="mt-4 grid gap-3 sm:grid-cols-3">
+                {STEPS.map((step, index) => {
+                  const done = index < stepsDone;
+                  return (
+                    <li
+                      key={step}
+                      className={cx(
+                        "rounded-2xl border p-5",
+                        done ? "border-emerald-400/30 bg-emerald-400/[0.04]" : "border-[var(--line)] bg-[var(--surface)]",
+                      )}
+                    >
+                      <span
+                        aria-hidden
+                        className={cx(
+                          "flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold",
+                          done ? "bg-emerald-400/15 text-emerald-300" : "bg-[var(--accent-soft)] text-[var(--accent)]",
+                        )}
+                      >
+                        {done ? <CheckIcon className="h-4 w-4" /> : index + 1}
+                      </span>
+                      <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{step}</p>
+                      {done ? <span className="sr-only">(done)</span> : null}
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          </div>
+          <SectionCard title="What we keep" icon={<EyeOffIcon />}>
+            <p className="text-sm leading-6 text-[var(--muted)]">
+              Only the result: passed or not, and when. We never store your ID, your selfie, your name or your date of
+              birth. Veriff handles those under its own privacy policy and retention rules. See our{" "}
+              <Link href="/privacy" className="!text-[var(--accent)] underline underline-offset-2">
+                privacy policy
+              </Link>{" "}
+              for details.
+            </p>
+          </SectionCard>
+        </div>
+      </div>
     </AppShell>
   );
 }
+
+const STEPS = [
+  "We send you to Veriff, an identity verification company.",
+  "You take a photo of a government ID and a short selfie video. It takes about two minutes.",
+  "Veriff tells us whether you passed, and you come back here.",
+];

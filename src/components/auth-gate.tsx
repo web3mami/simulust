@@ -3,11 +3,13 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
+import { CloseIcon, HeartIcon, LockIcon } from "@/components/icons";
 import { LoginScreen } from "@/components/login-screen";
 import { isPrivyConfigured } from "@/components/privy-app";
 import { sessionFromPrivyUser, type Session } from "@/lib/session";
 import type { Features, Me, MeResponse } from "@/lib/api-types";
 import { readDevUser, writeDevUser } from "@/lib/dev-user";
+import { buttonClass } from "@/components/ui";
 
 type AuthIntent = "login" | "signup";
 
@@ -74,39 +76,61 @@ type Suspension = false | "policy" | "age_locked";
 
 function SuspendedNotice({ reason, onSignOut }: { reason: Exclude<Suspension, false>; onSignOut: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
-      <div className="w-full max-w-md rounded-3xl border border-[var(--line)] bg-[var(--bg)] p-6 text-[var(--ink)]">
-        <h2 className="font-[family-name:var(--font-display)] text-2xl">
-          {reason === "age_locked" ? "This account is locked" : "This account is suspended"}
-        </h2>
-        <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-          {reason === "age_locked"
-            ? "An age check showed a birth date under 18, so the account is locked while we review it. If that's wrong, contact support and we'll look again. Support can also send you a copy of your data or delete it."
-            : "It broke the content policy. To appeal, or to get a copy of your data or have it deleted, contact support and include your account email or wallet address."}
-        </p>
-        {/* A locked account can't reach the chat, where crisis resources usually show. */}
-        <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-          If you&apos;re having thoughts of hurting yourself: in the US and Canada call or text{" "}
-          <a href="tel:988" className="underline">988</a>; in the UK and Ireland call Samaritans on{" "}
-          <a href="tel:116123" className="underline">116 123</a>; anywhere else,{" "}
-          <a href="https://findahelpline.com" target="_blank" rel="noreferrer" className="underline">
-            findahelpline.com
-          </a>
-          .
-        </p>
-        <div className="mt-6 flex gap-3">
-          <a href="/content-policy" className="rounded-full border border-white/20 px-4 py-2 text-sm">
-            Content policy
-          </a>
-          <button type="button" onClick={onSignOut} className="rounded-full bg-[var(--gold)] px-4 py-2 text-sm font-medium !text-[#12110F]">
-            Sign out
-          </button>
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-sm"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="suspended-title"
+    >
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-3xl border border-[var(--line)] bg-[var(--bg-2)] p-6 text-[var(--ink)] shadow-[0_30px_80px_rgba(0,0,0,0.6)] sm:p-8">
+          <span aria-hidden className="flex h-12 w-12 items-center justify-center rounded-full bg-red-500/15 text-red-300">
+            <LockIcon className="h-6 w-6" />
+          </span>
+          <h2 id="suspended-title" className="mt-4 text-2xl font-bold tracking-tight">
+            {reason === "age_locked" ? "This account is locked" : "This account is suspended"}
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+            {reason === "age_locked"
+              ? "An age check showed a birth date under 18, so the account is locked while we review it. If that's wrong, contact support and we'll look again. Support can also send you a copy of your data or delete it."
+              : "It broke the content policy. To appeal, or to get a copy of your data or have it deleted, contact support and include your account email or wallet address."}
+          </p>
+          {/* A locked account can't reach the chat, where crisis resources usually show. */}
+          <div className="mt-5 flex gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4">
+            <HeartIcon className="mt-0.5 h-5 w-5 text-[var(--accent)]" />
+            <p className="text-sm leading-6 text-[var(--muted)]">
+              If you&apos;re having thoughts of hurting yourself: in the US and Canada call or text{" "}
+              <a href="tel:988" className="font-semibold !text-[var(--ink)] underline underline-offset-2">988</a>; in the UK
+              and Ireland call Samaritans on{" "}
+              <a href="tel:116123" className="font-semibold !text-[var(--ink)] underline underline-offset-2">116 123</a>;
+              anywhere else,{" "}
+              <a
+                href="https://findahelpline.com"
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold !text-[var(--ink)] underline underline-offset-2"
+              >
+                findahelpline.com
+              </a>
+              .
+            </p>
+          </div>
+          <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row">
+            <a href="/content-policy" className={buttonClass("secondary", "lg", "flex-1 !text-[var(--ink)]")}>
+              Content policy
+            </a>
+            <button type="button" onClick={onSignOut} className={buttonClass("primary", "lg", "flex-1")}>
+              Sign out
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
+// Image on the left and the sign-in options on the right (LoginScreen draws
+// both); this is the overlay and the close button.
 function LoginModal({
   open,
   intent,
@@ -118,14 +142,24 @@ function LoginModal({
 }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-      <div className="w-full max-w-md rounded-3xl border border-[var(--line)] bg-[var(--bg)]">
-        <div className="flex justify-end px-4 pt-4">
-          <button type="button" className="text-sm text-[var(--muted)]" onClick={onClose}>
-            Close
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/75 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="login-title"
+    >
+      <div className="flex min-h-full items-center justify-center p-3 sm:p-6">
+        <div className="relative w-full max-w-[880px] overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--bg-2)] shadow-[0_30px_80px_rgba(0,0,0,0.6)]">
+          <button
+            type="button"
+            aria-label="Close"
+            className="absolute right-3 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur transition-colors hover:bg-black/70"
+            onClick={onClose}
+          >
+            <CloseIcon />
           </button>
+          <LoginScreen embedded intent={intent} onSignedIn={onClose} />
         </div>
-        <LoginScreen embedded intent={intent} onSignedIn={onClose} />
       </div>
     </div>
   );

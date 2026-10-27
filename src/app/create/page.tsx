@@ -1,33 +1,64 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppHeader, AppShell } from "@/components/app-shell";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
-import { ApiError, useApi, useAuthHeaders } from "@/lib/api";
+import { ActionBar } from "@/components/create/action-bar";
+import { MediaImage } from "@/components/create/media-image";
+import {
+  BODIES,
+  BREASTS,
+  DEFAULT_VOICE,
+  EYE_COLORS,
+  GIRL_ETHNICITY,
+  GIRL_HAIR_STYLES,
+  GIRL_NAMES,
+  GIRL_ROLES,
+  GUY_BODIES,
+  GUY_ETHNICITY,
+  GUY_HAIR,
+  GUY_HAIR_STYLES,
+  GUY_NAMES,
+  GUY_ROLES,
+  HAIR,
+  JOBS,
+  KINKS,
+  MAX_AGE,
+  MIN_AGE,
+  NAME_MAX,
+  NAME_RULE,
+  PERSONALITIES,
+  PERSONALITY_INFO,
+  ROLE_INFO,
+  STEPS,
+  STYLE_CARDS,
+  STYLE_FRAMES,
+  VOICES,
+  ageLabel,
+  clampAge,
+  nameProblem,
+  type Section,
+  type Step,
+  type Style,
+} from "@/components/create/options";
+import { Stepper } from "@/components/create/stepper";
+import { SummaryPanel, type SummaryRow } from "@/components/create/summary";
+import {
+  AgePicker,
+  CheckIcon,
+  ChoiceGroup,
+  EyeTile,
+  ImageTile,
+  OptionCard,
+  RefreshIcon,
+  ShuffleIcon,
+} from "@/components/create/tiles";
+import { ChevronRightIcon, CoinIcon, FemaleIcon, MaleIcon, SparkIcon } from "@/components/icons";
+import { Button, ButtonLink, Chip, Panel, cx, inputClass } from "@/components/ui";
+import { ApiError, useApi } from "@/lib/api";
 import type { CharacterDTO, MediaDTO } from "@/lib/api-types";
-import { JOBS, KINKS, PERSONALITIES, type PortraitRequest } from "@/lib/portrait-prompt";
 import { COSTS, FREE } from "@/lib/pricing";
-
-type Section = "girls" | "guys";
-type Style = "realistic" | "anime";
-type Step = "style" | "ethnicity" | "hair" | "body" | "breast" | "train" | "portrait";
-
-const GIRL_NAMES = ["Elena Voss", "Maren Cole", "Camille Ortiz", "Priya Shah", "Ingrid Hale"];
-const GUY_NAMES = ["Adrian Cole", "Marco Diaz", "Julian Park", "Malik Grant", "Kenji Mori"];
-
-// Every option is typed against the lists the portrait and character routes
-// accept, so the page can only send values the server takes.
-type Option<Field extends keyof PortraitRequest> = { id: NonNullable<PortraitRequest[Field]>; src: string };
-
-const GIRL_ROLES: PortraitRequest["role"][] = ["Girlfriend", "Stranger", "Exclusive", "Friends with benefits"];
-const GUY_ROLES: PortraitRequest["role"][] = ["Boyfriend", "Stranger", "Exclusive", "Friends with benefits"];
-const VOICES = ["Voice 1", "Voice 2", "Voice 3", "Voice 4", "Voice 5", "Voice 6"];
-
-const MIN_AGE = 18;
-const MAX_AGE = 39;
-const clampAge = (value: number) => Math.min(MAX_AGE, Math.max(MIN_AGE, Math.round(Number.isFinite(value) ? value : MIN_AGE)));
 
 // Choices survive a login round trip (OAuth leaves the page) for this tab only.
 const DRAFT_KEY = "simulust-create-draft";
@@ -68,296 +99,18 @@ function writeDraft(draft: Draft) {
   }
 }
 
-const GIRL_ETHNICITY: (Option<"ethnicity"> & { realistic: string })[] = [
-  { id: "Caucasian", src: "/creator/eth-girl-anime-caucasian.jpg", realistic: "/characters/june.jpg" },
-  { id: "Asian", src: "/creator/eth-girl-anime-asian.jpg", realistic: "/characters/aiko.jpg" },
-  { id: "Latina", src: "/creator/eth-girl-anime-latina.jpg", realistic: "/characters/lucia.jpg" },
-  { id: "Black", src: "/creator/eth-girl-anime-black.jpg", realistic: "/characters/amara.jpg" },
-];
-
-const GUY_ETHNICITY: (Option<"ethnicity"> & { realistic: string })[] = [
-  { id: "Caucasian", src: "/creator/eth-guy-anime-caucasian.jpg", realistic: "/creator/eth-guy-realistic-caucasian.jpg" },
-  { id: "Asian", src: "/creator/eth-guy-anime-asian.jpg", realistic: "/creator/eth-guy-realistic-asian.jpg" },
-  { id: "Latino", src: "/creator/eth-guy-anime-latino.jpg", realistic: "/creator/eth-guy-realistic-latino.jpg" },
-  { id: "Black", src: "/creator/eth-guy-anime-black.jpg", realistic: "/creator/eth-guy-realistic-black.jpg" },
-];
-
-const HAIR: Option<"hair">[] = [
-  { id: "Blonde", src: "/creator/hair-blonde.jpg" },
-  { id: "Brunette", src: "/creator/hair-brunette.jpg" },
-  { id: "Black", src: "/creator/hair-black.jpg" },
-  { id: "Red", src: "/creator/hair-red.jpg" },
-];
-
-const GIRL_HAIR_STYLES: (Option<"hairStyle"> & { anime: string })[] = [
-  { id: "Straight", src: "/creator/hair-style-girl-straight.jpg", anime: "/creator/hair-style-girl-anime-straight.jpg" },
-  { id: "Wavy", src: "/creator/hair-style-girl-wavy.jpg", anime: "/creator/hair-style-girl-anime-wavy.jpg" },
-  { id: "Curly", src: "/creator/hair-style-girl-curly.jpg", anime: "/creator/hair-style-girl-anime-curly.jpg" },
-  { id: "Coily", src: "/creator/hair-style-girl-coily.jpg", anime: "/creator/hair-style-girl-anime-coily.jpg" },
-  { id: "Long", src: "/creator/hair-style-girl-long.jpg", anime: "/creator/hair-style-girl-anime-long.jpg" },
-  { id: "Short", src: "/creator/hair-style-girl-short.jpg", anime: "/creator/hair-style-girl-anime-short.jpg" },
-  { id: "Ponytail", src: "/creator/hair-style-girl-ponytail.jpg", anime: "/creator/hair-style-girl-anime-ponytail.jpg" },
-  { id: "Bun", src: "/creator/hair-style-girl-bun.jpg", anime: "/creator/hair-style-girl-anime-bun.jpg" },
-];
-
-const GUY_HAIR_STYLES: (Option<"hairStyle"> & { anime: string })[] = [
-  { id: "Short", src: "/creator/hair-style-guy-short.jpg", anime: "/creator/hair-style-guy-anime-short.jpg" },
-  { id: "Medium", src: "/creator/hair-style-guy-medium.jpg", anime: "/creator/hair-style-guy-anime-medium.jpg" },
-  { id: "Long", src: "/creator/hair-style-guy-long.jpg", anime: "/creator/hair-style-guy-anime-long.jpg" },
-  { id: "Wavy", src: "/creator/hair-style-guy-wavy.jpg", anime: "/creator/hair-style-guy-anime-wavy.jpg" },
-  { id: "Curly", src: "/creator/hair-style-guy-curly.jpg", anime: "/creator/hair-style-guy-anime-curly.jpg" },
-  { id: "Buzz", src: "/creator/hair-style-guy-buzz.jpg", anime: "/creator/hair-style-guy-anime-buzz.jpg" },
-  { id: "Undercut", src: "/creator/hair-style-guy-undercut.jpg", anime: "/creator/hair-style-guy-anime-undercut.jpg" },
-  { id: "Slicked back", src: "/creator/hair-style-guy-slicked.jpg", anime: "/creator/hair-style-guy-anime-slicked.jpg" },
-];
-
-const EYE_COLORS: Option<"eyeColor">[] = [
-  { id: "Brown", src: "/creator/eye-brown.jpg" },
-  { id: "Hazel", src: "/creator/eye-hazel.jpg" },
-  { id: "Green", src: "/creator/eye-green.jpg" },
-  { id: "Blue", src: "/creator/eye-blue.jpg" },
-  { id: "Gray", src: "/creator/eye-gray.jpg" },
-  { id: "Amber", src: "/creator/eye-amber.jpg" },
-];
-
-const GUY_HAIR: Record<Style, Record<string, string>> = {
-  realistic: {
-    Blonde: "/creator/hair-guy-real-blonde.jpg",
-    Brunette: "/creator/hair-guy-real-brunette.jpg",
-    Black: "/creator/hair-guy-real-black.jpg",
-    Red: "/creator/hair-guy-real-red.jpg",
-  },
-  anime: {
-    Blonde: "/creator/hair-guy-anime-blonde.jpg",
-    Brunette: "/creator/hair-guy-anime-brunette.jpg",
-    Black: "/creator/hair-guy-anime-black.jpg",
-    Red: "/creator/hair-guy-anime-red.jpg",
-  },
-};
-
-const BODIES: Option<"body">[] = [
-  { id: "Petite", src: "/creator/body-petite.jpg" },
-  { id: "Athletic", src: "/creator/body-athletic.jpg" },
-  { id: "Curvy", src: "/creator/body-curvy.jpg" },
-  { id: "Thick", src: "/creator/body-thick.jpg" },
-];
-
-const GUY_BODIES: Option<"body">[] = [
-  { id: "Slim", src: "/creator/body-guy-slim.jpg" },
-  { id: "Athletic", src: "/creator/body-guy-athletic.jpg" },
-  { id: "Muscular", src: "/creator/body-guy-muscular.jpg" },
-  { id: "Soft", src: "/creator/body-guy-soft.jpg" },
-];
-
-const BREASTS: Option<"breast">[] = [
-  { id: "Small", src: "/creator/breast-small.jpg" },
-  { id: "Medium", src: "/creator/breast-medium.jpg" },
-  { id: "Large", src: "/creator/breast-large.jpg" },
-];
-
-const HAND: Record<Section, Record<Style, string[]>> = {
-  girls: {
-    realistic: [
-      "/creator/style-girl-realistic.jpg",
-      "/creator/flow-girl-real-1.jpg",
-      "/creator/loop-girl-real-2.jpg",
-      "/creator/flow-girl-real-2.jpg",
-      "/creator/loop-girl-real-3.jpg",
-      "/creator/flow-girl-real-3.jpg",
-      "/creator/loop-girl-real-4.jpg",
-      "/creator/flow-girl-real-4.jpg",
-      "/creator/loop-girl-real-5.jpg",
-    ],
-    anime: [
-      "/creator/style-girl-anime.jpg",
-      "/creator/flow-girl-anime-1.jpg",
-      "/creator/loop-girl-anime-2.jpg",
-      "/creator/flow-girl-anime-2.jpg",
-      "/creator/loop-girl-anime-3.jpg",
-      "/creator/flow-girl-anime-3.jpg",
-      "/creator/loop-girl-anime-4.jpg",
-      "/creator/flow-girl-anime-4.jpg",
-      "/creator/loop-girl-anime-5.jpg",
-    ],
-  },
-  guys: {
-    realistic: [
-      "/creator/style-guy-realistic.jpg",
-      "/creator/flow-guy-real-1.jpg",
-      "/creator/loop-guy-real-2.jpg",
-      "/creator/flow-guy-real-2.jpg",
-      "/creator/loop-guy-real-3.jpg",
-      "/creator/flow-guy-real-3.jpg",
-      "/creator/loop-guy-real-4.jpg",
-      "/creator/flow-guy-real-4.jpg",
-      "/creator/loop-guy-real-5.jpg",
-    ],
-    anime: [
-      "/creator/style-guy-anime.jpg",
-      "/creator/flow-guy-anime-1.jpg",
-      "/creator/loop-guy-anime-2.jpg",
-      "/creator/flow-guy-anime-2.jpg",
-      "/creator/loop-guy-anime-3.jpg",
-      "/creator/flow-guy-anime-3.jpg",
-      "/creator/loop-guy-anime-4.jpg",
-      "/creator/flow-guy-anime-4.jpg",
-      "/creator/loop-guy-anime-5.jpg",
-    ],
-  },
-};
-
-function EyeColorCard({
-  src,
-  label,
-  selected,
-  onClick,
-}: {
-  src: string;
-  label: string;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`relative overflow-hidden rounded-xl border bg-[#171717] text-left ${
-        selected ? "border-white" : "border-white/10"
-      }`}
-    >
-      <div className="flex h-[4.75rem] items-center justify-center px-2 pt-2 sm:h-24">
-        <img src={src} alt="" className="max-h-14 max-w-[3.5rem] object-contain sm:max-h-16 sm:max-w-16" />
-      </div>
-      <span className="block px-1 pb-2.5 text-center text-sm font-semibold">{label}</span>
-      {selected ? (
-        <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-black">
-          ✓
-        </span>
-      ) : null}
-    </button>
-  );
-}
-
-// /api/media URLs authenticate with the session cookie. If the browser didn't
-// send one, fetch the image with the bearer token instead.
-function MediaImage({ url, className }: { url: string; className: string }) {
-  const authHeaders = useAuthHeaders();
-  const [src, setSrc] = useState(url);
-  const [failed, setFailed] = useState(false);
-  const retried = useRef(false);
-
-  useEffect(() => {
-    if (!src.startsWith("blob:")) return;
-    return () => URL.revokeObjectURL(src);
-  }, [src]);
-
-  const retry = useCallback(async () => {
-    if (retried.current) {
-      setFailed(true);
-      return;
-    }
-    retried.current = true;
-    try {
-      const response = await fetch(url, { headers: await authHeaders(), cache: "no-store" });
-      if (!response.ok) throw new Error(String(response.status));
-      setSrc(URL.createObjectURL(await response.blob()));
-    } catch {
-      setFailed(true);
-    }
-  }, [url, authHeaders]);
-
-  if (failed) {
-    return (
-      <div className={`${className} flex items-center justify-center border border-white/10 bg-[#171717] px-6 text-center text-sm text-white/70`}>
-        The portrait was made but won&apos;t load. Refresh the page to try again.
-      </div>
-    );
-  }
-  return <img src={src} alt="" className={className} onError={() => void retry()} />;
-}
-
-function PictureCard({
-  src,
-  frames,
-  label,
-  selected,
-  onClick,
-}: {
-  src: string;
-  frames?: string[];
-  label: string;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  const frameKey = frames?.join("|") ?? "";
-  const poses = useMemo(() => (frameKey ? frameKey.split("|") : [src]), [frameKey, src]);
-  const photo = useRef<HTMLImageElement>(null);
-
-  useEffect(() => {
-    const el = photo.current;
-    if (!el || poses.length < 2) return;
-    let cancelled = false;
-    let raf = 0;
-    let shown = -1;
-    const cache = poses.map((url) => {
-      const img = new Image();
-      img.src = url;
-      return img;
-    });
-    const start = performance.now();
-    const tick = (now: number) => {
-      if (cancelled || !photo.current) return;
-      const progress = ((now - start) % 8000) / 8000;
-      const trip = progress < 0.5 ? progress * 2 : 2 - progress * 2;
-      const index = Math.min(poses.length - 1, Math.round(trip * (poses.length - 1)));
-      if (index !== shown) {
-        photo.current.src = cache[index].src;
-        shown = index;
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    Promise.all(cache.map((img) => img.decode().catch(() => undefined))).then(() => {
-      if (!cancelled) raf = requestAnimationFrame(tick);
-    });
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(raf);
-    };
-  }, [poses]);
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`relative overflow-hidden rounded-2xl border bg-[#171717] text-left ${
-        selected ? "border-white" : "border-white/10"
-      }`}
-    >
-      <img
-        ref={photo}
-        src={poses[0] ?? src}
-        alt=""
-        className="aspect-[3/4] w-full object-cover"
-      />
-      <span className="absolute inset-x-0 bottom-0 bg-black/55 px-3 py-3 text-center text-lg font-semibold">
-        {label}
-      </span>
-      {selected ? (
-        <span className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full bg-white text-sm text-black">
-          ✓
-        </span>
-      ) : null}
-    </button>
-  );
-}
+const PORTRAIT_INDEX = STEPS.indexOf("portrait");
+const VOICE_INDEX = STEPS.indexOf("voice");
 
 export default function CreatePage() {
   const router = useRouter();
-  const { session, me, openLogin, refreshMe } = useSession();
+  const { session, me, openLogin, openSignup, refreshMe } = useSession();
   const api = useApi();
   const [section, setSection] = useState<Section>("girls");
   const [style, setStyle] = useState<Style | "">("");
   const [step, setStep] = useState<Step>("style");
+  // The furthest step reached, so the step bar only jumps to steps already seen.
+  const [furthest, setFurthest] = useState(0);
   const [ethnicity, setEthnicity] = useState("");
   const [eyeColor, setEyeColor] = useState("");
   const [age, setAge] = useState(24);
@@ -371,8 +124,7 @@ export default function CreatePage() {
   const [role, setRole] = useState<string>(GIRL_ROLES[0]);
   const [occupation, setOccupation] = useState<string>(JOBS[0]);
   const [kinks, setKinks] = useState<string[]>(["Praise"]);
-  const [voice, setVoice] = useState(VOICES[0]);
-  const [openField, setOpenField] = useState<string | null>(null);
+  const [voice, setVoice] = useState(DEFAULT_VOICE.girls);
   const [portrait, setPortrait] = useState<MediaDTO | null>(null);
   const [portraitError, setPortraitError] = useState<string | null>(null);
   const [needsCredits, setNeedsCredits] = useState(false);
@@ -380,6 +132,8 @@ export default function CreatePage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const drawToken = useRef(0);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const shownStep = useRef<Step>("style");
 
   useEffect(() => {
     const draft = readDraft();
@@ -401,29 +155,103 @@ export default function CreatePage() {
     setOccupation(draft.occupation);
     setKinks(Array.isArray(draft.kinks) ? draft.kinks.slice(0, 3) : []);
     setVoice(draft.voice);
-    setStep("train");
+    setStep("voice");
+    setFurthest(VOICE_INDEX);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
-  const steps = useMemo<Step[]>(
-    () =>
-      section === "girls"
-        ? ["style", "ethnicity", "hair", "body", "breast", "train", "portrait"]
-        : ["style", "ethnicity", "hair", "body", "train", "portrait"],
-    [section],
-  );
+  // A new step starts at the top, with its heading announced.
+  useEffect(() => {
+    if (shownStep.current === step) return;
+    shownStep.current = step;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: still ? "auto" : "smooth" });
+    heading.current?.focus({ preventScroll: true });
+  }, [step]);
+
+  const steps = STEPS;
   const index = steps.indexOf(step);
   const look: Style = style || "realistic";
-  const ethnicities = section === "girls" ? GIRL_ETHNICITY : GUY_ETHNICITY;
-  const hairStyles = section === "girls" ? GIRL_HAIR_STYLES : GUY_HAIR_STYLES;
-  const roles = section === "girls" ? GIRL_ROLES : GUY_ROLES;
+  const girls = section === "girls";
+  const ethnicities = girls ? GIRL_ETHNICITY : GUY_ETHNICITY;
+  const hairStyles = girls ? GIRL_HAIR_STYLES : GUY_HAIR_STYLES;
+  const roles = girls ? GIRL_ROLES : GUY_ROLES;
+  const bodies = girls ? BODIES : GUY_BODIES;
+  const ownTone = girls ? "Feminine" : "Masculine";
+  const voices = [...VOICES].sort((a, b) => Number(b.tone === ownTone) - Number(a.tone === ownTone));
+  const problem = nameProblem(name);
+
+  // Warm the cache with the next step's pictures so its tiles show at once.
+  useEffect(() => {
+    const upcoming =
+      step === "style"
+        ? [
+            ...(girls ? GIRL_ETHNICITY : GUY_ETHNICITY).map((row) => (look === "realistic" ? row.realistic : row.src)),
+            ...EYE_COLORS.map((row) => row.src),
+          ]
+        : step === "look"
+          ? [...(girls ? [...BODIES, ...BREASTS] : GUY_BODIES).map((row) => row.src)]
+          : [];
+    for (const src of upcoming) {
+      const img = new Image();
+      img.src = src;
+    }
+  }, [step, girls, look]);
+  const cleanName = name.trim();
 
   function ethnicitySrc(id: string) {
     const row = ethnicities.find((item) => item.id === id) ?? ethnicities[0];
     return look === "realistic" ? row.realistic : row.src;
   }
 
+  function stepReady(current: Step) {
+    if (current === "style") return Boolean(style);
+    if (current === "look") return Boolean(ethnicity && eyeColor && hair && hairStyle);
+    if (current === "body") return Boolean(body && (!girls || breast));
+    if (current === "personality") return Boolean(personality && occupation);
+    if (current === "relationship") return Boolean(role && kinks.length);
+    if (current === "voice") return Boolean(voice && !problem);
+    return true;
+  }
+
+  // What's still missing on a step, in words, for the hint next to Next.
+  function missing(current: Step): string | null {
+    const still = (parts: [boolean, string][]) => {
+      const names = parts.filter(([done]) => !done).map(([, label]) => label);
+      return names.length ? `Still to pick: ${names.join(", ")}.` : null;
+    };
+    if (current === "style") return style ? null : "Pick Realistic or Anime to continue.";
+    if (current === "look")
+      return still([
+        [Boolean(ethnicity), "ethnicity"],
+        [Boolean(eyeColor), "eye color"],
+        [Boolean(hairStyle), "hair style"],
+        [Boolean(hair), "hair color"],
+      ]);
+    if (current === "body") return still([[Boolean(body), "body type"], ...(girls ? [[Boolean(breast), "breast size"] as [boolean, string]] : [])]);
+    if (current === "personality") return still([[Boolean(personality), "personality"], [Boolean(occupation), "occupation"]]);
+    if (current === "relationship") return still([[Boolean(role), "relationship"], [kinks.length > 0, "at least one kink"]]);
+    if (current === "voice") return problem ? "Fix the name to continue." : null;
+    return null;
+  }
+
+  function goTo(next: Step) {
+    setStepError(null);
+    setStep(next);
+    setFurthest((value) => Math.max(value, steps.indexOf(next)));
+  }
+
+  // The step bar and the summary only jump to steps already reached, and never
+  // forward into the portrait: that always means drawing a new one.
+  function canVisit(target: number) {
+    if (target === index) return false;
+    if (target < index) return true;
+    if (target === PORTRAIT_INDEX || target > furthest) return false;
+    return steps.slice(0, target).every(stepReady);
+  }
+
   function goSection(next: Section) {
+    if (next === section) return;
     setSection(next);
     setStyle("");
     setEthnicity("");
@@ -434,15 +262,17 @@ export default function CreatePage() {
     setBreast("");
     setRole(next === "girls" ? GIRL_ROLES[0] : GUY_ROLES[0]);
     setName(next === "girls" ? GIRL_NAMES[0] : GUY_NAMES[0]);
+    setVoice(DEFAULT_VOICE[next]);
     setPortrait(null);
     setPortraitError(null);
     setNeedsCredits(false);
     setStepError(null);
+    setFurthest(0);
     setStep("style");
   }
 
   function shuffleName() {
-    const pool = section === "girls" ? GIRL_NAMES : GUY_NAMES;
+    const pool = girls ? GIRL_NAMES : GUY_NAMES;
     const other = pool.filter((item) => item !== name);
     setName(other[Math.floor(Math.random() * other.length)] ?? pool[0]);
   }
@@ -455,55 +285,13 @@ export default function CreatePage() {
     });
   }
 
-  function stepReady(current: Step) {
-    if (current === "style") return Boolean(style);
-    if (current === "ethnicity") return Boolean(ethnicity && eyeColor);
-    if (current === "hair") return Boolean(hair && hairStyle);
-    if (current === "body") return Boolean(body);
-    if (current === "breast") return Boolean(breast);
-    if (current === "train") return Boolean(name.trim() && kinks.length);
-    return true;
-  }
-
   function next() {
     if (!stepReady(step)) {
       setStepError("You have to select all options.");
       return;
     }
-    setStepError(null);
     const following = steps[index + 1];
-    if (following) setStep(following);
-  }
-
-  function tryGenerate() {
-    if (!stepReady("train")) {
-      setStepError("You have to select all options.");
-      return;
-    }
-    if (!session) {
-      writeDraft({
-        section,
-        style,
-        ethnicity,
-        eyeColor,
-        age,
-        hairStyle,
-        hair,
-        body,
-        breast,
-        name,
-        personality,
-        role,
-        occupation,
-        kinks,
-        voice,
-      });
-      setStepError("Log in to generate your portrait. Your choices are saved.");
-      openLogin();
-      return;
-    }
-    setStepError(null);
-    void drawPortrait();
+    if (following) goTo(following);
   }
 
   function back() {
@@ -512,10 +300,46 @@ export default function CreatePage() {
     if (previous) setStep(previous);
   }
 
+  function saveDraft() {
+    writeDraft({
+      section,
+      style,
+      ethnicity,
+      eyeColor,
+      age,
+      hairStyle,
+      hair,
+      body,
+      breast,
+      name,
+      personality,
+      role,
+      occupation,
+      kinks,
+      voice,
+    });
+  }
+
+  function tryGenerate() {
+    if (!steps.slice(0, VOICE_INDEX + 1).every(stepReady)) {
+      setStepError("You have to select all options.");
+      return;
+    }
+    if (!session) {
+      saveDraft();
+      setStepError("Log in to generate your portrait. Your choices are saved.");
+      openLogin();
+      return;
+    }
+    setStepError(null);
+    void drawPortrait();
+  }
+
   async function drawPortrait() {
     const token = drawToken.current + 1;
     drawToken.current = token;
     setStep("portrait");
+    setFurthest(PORTRAIT_INDEX);
     setDrawing(true);
     setPortrait(null);
     setPortraitError(null);
@@ -595,504 +419,577 @@ export default function CreatePage() {
     }
   }
 
-  const styleCards =
-    section === "girls"
-      ? [
-          { id: "realistic" as const, label: "Realistic", src: "/creator/style-girl-realistic.jpg" },
-          { id: "anime" as const, label: "Anime", src: "/creator/style-girl-anime.jpg" },
-        ]
-      : [
-          { id: "realistic" as const, label: "Realistic", src: "/creator/style-guy-realistic.jpg" },
-          { id: "anime" as const, label: "Anime", src: "/creator/style-guy-anime.jpg" },
-        ];
+  const her = girls ? "her" : "his";
+  const them = girls ? "her" : "him";
+  const styleName = look === "anime" ? "Anime" : "Realistic";
+  const voiceInfo = VOICES.find((item) => item.id === voice);
+  const balance = me ? me.balance.toLocaleString("en-US") : null;
+
+  const headings: Record<Step, { accent: string; title: string; subtitle: string }> = {
+    style: {
+      accent: "Create",
+      title: girls ? "my AI girl" : "my AI guy",
+      subtitle: "Pick who you want to meet and an art style. You can change anything before the portrait.",
+    },
+    look: { accent: "Choose", title: `${her} look`, subtitle: "Ethnicity, age, eyes and hair. Tap a picture to pick it." },
+    body: {
+      accent: "Choose",
+      title: `${her} body`,
+      subtitle: girls ? "Pick a body type and a breast size." : "Pick a body type.",
+    },
+    personality: { accent: "Pick", title: `${her} personality`, subtitle: `How ${girls ? "she acts" : "he acts"} with you, and what ${girls ? "she does" : "he does"} for a living.` },
+    relationship: {
+      accent: "Set",
+      title: "the relationship",
+      subtitle: `Who you are to each other, and up to 3 things ${girls ? "she's" : "he's"} into.`,
+    },
+    voice: {
+      accent: "Name",
+      title: `${them} and pick a voice`,
+      subtitle: "The last step before we draw the portrait.",
+    },
+    portrait: {
+      accent: "Meet",
+      title: cleanName || "your character",
+      subtitle: girls
+        ? "Drawn from the style, ethnicity, age, hair, body, breast size, and personality you picked."
+        : "Drawn from the style, ethnicity, age, hair, body, and personality you picked.",
+    },
+  };
+  const head = headings[step];
+
+  const summaryRows: SummaryRow[] = [
+    { step: "style", index: 0, values: [girls ? "Girl" : "Guy", style && styleName] },
+    {
+      step: "look",
+      index: 1,
+      values: [
+        ethnicity,
+        furthest >= 1 && `${ageLabel(age)} years`,
+        eyeColor && `${eyeColor} eyes`,
+        (hair || hairStyle) && `${[hair, hairStyle].filter(Boolean).join(" ").toLowerCase()} hair`,
+      ],
+    },
+    { step: "body", index: 2, values: [body, girls && breast && `${breast} breasts`] },
+    { step: "personality", index: 3, values: furthest >= 3 ? [personality, occupation] : [] },
+    { step: "relationship", index: 4, values: furthest >= 4 ? [role, kinks.join(", ")] : [] },
+    { step: "voice", index: 5, values: furthest >= 5 ? [cleanName, voiceInfo ? `${voiceInfo.description} voice` : voice] : [] },
+  ];
+
+  const preview = ethnicity
+    ? ethnicitySrc(ethnicity)
+    : (STYLE_CARDS[section].find((card) => card.id === look) ?? STYLE_CARDS[section][0]).src;
+
+  const creditNote = me
+    ? `A portrait uses ${COSTS.portrait} credits. You have ${balance}.`
+    : `A portrait uses ${COSTS.portrait} credits. New accounts start with ${FREE.signupCredits} free.`;
+
+  const creditsPanel = (
+    <Panel className="p-4">
+      <div className="flex items-center gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--premium)]/15 text-[var(--premium)]">
+          <CoinIcon />
+        </span>
+        <p className="text-sm leading-5 text-[var(--muted)]">{creditNote}</p>
+      </div>
+      {session ? null : (
+        <div className="mt-3 flex gap-2">
+          <Button
+            size="md"
+            className="flex-1"
+            onClick={() => {
+              saveDraft();
+              openSignup();
+            }}
+          >
+            Sign up free
+          </Button>
+          <Button
+            variant="secondary"
+            size="md"
+            className="flex-1"
+            onClick={() => {
+              saveDraft();
+              openLogin();
+            }}
+          >
+            Log in
+          </Button>
+        </div>
+      )}
+    </Panel>
+  );
+
+  let primary: ReactNode;
+  let hint: string | null = null;
+  if (step === "voice") {
+    hint = missing(step);
+    primary = (
+      <Button size="lg" className="w-full whitespace-nowrap px-4 sm:w-auto sm:px-6" disabled={!stepReady(step)} onClick={tryGenerate}>
+        <SparkIcon className="hidden h-5 w-5 sm:block" />
+        Generate portrait
+        <span className="inline-flex items-center gap-1 rounded-full bg-black/20 px-2 py-0.5 text-xs">
+          <CoinIcon className="h-3.5 w-3.5" />
+          {COSTS.portrait}
+        </span>
+      </Button>
+    );
+  } else if (step === "portrait") {
+    if (portraitError && !drawing) {
+      primary = needsCredits ? (
+        <ButtonLink href="/premium" variant="premium" size="lg" className="w-full sm:w-auto sm:min-w-44">
+          <CoinIcon className="h-5 w-5" />
+          Get credits
+        </ButtonLink>
+      ) : (
+        <Button size="lg" className="w-full sm:w-auto sm:min-w-44" onClick={() => (session ? void drawPortrait() : openLogin())}>
+          {session ? `Try again · ${COSTS.portrait} credits` : "Log in"}
+        </Button>
+      );
+    } else {
+      hint = drawing ? "Drawing the portrait. This takes a few seconds." : null;
+      primary = (
+        <Button size="lg" className="w-full sm:w-auto sm:min-w-44" disabled={!portrait || drawing || saving} onClick={finish}>
+          {saving ? "Saving…" : "Start chatting"}
+          {saving ? null : <ChevronRightIcon className="h-5 w-5" />}
+        </Button>
+      );
+    }
+  } else {
+    hint = missing(step);
+    primary = (
+      <Button size="lg" className="w-full sm:w-auto sm:min-w-40" disabled={!stepReady(step)} onClick={next}>
+        Next
+        <ChevronRightIcon className="h-5 w-5" />
+      </Button>
+    );
+  }
 
   return (
     <AppShell>
-      <AppHeader />
-      <div className="mx-auto max-w-3xl px-4 pb-16">
-        <div className="mb-8 h-1.5 overflow-hidden rounded-full bg-white/10">
-          <div
-            className="h-full bg-[var(--gold)]"
-            style={{ width: `${((index + 1) / steps.length) * 100}%` }}
-          />
-        </div>
+      <div className="mx-auto w-full max-w-[1600px] px-4 pb-28 pt-5 sm:px-6 lg:px-8 lg:pb-12 lg:pt-8">
+        <Stepper
+          steps={steps}
+          current={index}
+          done={(target) => target < furthest && target !== PORTRAIT_INDEX && stepReady(steps[target])}
+          canVisit={canVisit}
+          onGo={(target) => goTo(steps[target])}
+        />
 
-        {step === "style" ? (
-          <section>
-            <h1 className="text-center text-4xl font-semibold">
-              {section === "girls" ? "Create my AI girl" : "Create my AI guy"}
-            </h1>
-            <div className="mt-6 flex justify-center gap-3">
-              {(["girls", "guys"] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => goSection(item)}
-                  className={`rounded-full border px-5 py-2 text-sm ${
-                    section === item ? "border-[var(--accent)] text-white" : "border-white/15 text-white/70"
-                  }`}
+        <div
+          className={cx(
+            "mt-6 grid gap-8 lg:mt-8",
+            step !== "portrait" && "lg:grid-cols-[minmax(0,1fr)_17rem] xl:grid-cols-[minmax(0,1fr)_21rem]",
+          )}
+        >
+          <div className="min-w-0">
+            <div className={cx("mx-auto w-full", step === "portrait" ? "max-w-5xl" : "max-w-4xl")}>
+              <header>
+                <h1
+                  ref={heading}
+                  tabIndex={-1}
+                  className="text-2xl font-bold tracking-tight text-[var(--ink)] outline-none sm:text-3xl"
                 >
-                  {item === "girls" ? "Girls" : "Guys"}
-                </button>
-              ))}
-            </div>
-            <div className="mx-auto mt-8 grid max-w-2xl grid-cols-2 gap-4">
-              {styleCards.map((card) => (
-                <PictureCard
-                  key={card.id}
-                  src={card.src}
-                  frames={HAND[section][card.id]}
-                  label={card.label}
-                  selected={style === card.id}
-                  onClick={() => {
-                    setStyle(card.id);
-                    setStepError(null);
-                  }}
-                />
-              ))}
-            </div>
-            <StepNav error={stepError} onNext={next} />
-          </section>
-        ) : null}
+                  <span className="text-[var(--accent)]">{head.accent}</span> {head.title}
+                </h1>
+                <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[var(--muted)]">{head.subtitle}</p>
+              </header>
 
-        {step === "ethnicity" ? (
-          <section>
-            <h1 className="text-center text-3xl font-semibold">Choose ethnicity</h1>
-            <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {ethnicities.map((item) => (
-                <PictureCard
-                  key={item.id}
-                  src={ethnicitySrc(item.id)}
-                  label={item.id}
-                  selected={ethnicity === item.id}
-                  onClick={() => {
-                    setEthnicity(item.id);
-                    setStepError(null);
-                  }}
-                />
-              ))}
-            </div>
-            <h2 className="mt-10 text-center text-3xl font-semibold">Choose age</h2>
-            <div className="mt-4 rounded-2xl border border-white/10 bg-[#171717] px-5 py-6">
-              <p className="mx-auto w-fit rounded-lg border border-[var(--accent)] px-3 py-1 text-sm">
-                {age >= 39 ? "39+" : `${age} years`}
-              </p>
-              <input
-                type="range"
-                min={MIN_AGE}
-                max={MAX_AGE}
-                step={1}
-                value={age}
-                aria-label="Age"
-                onChange={(event) => setAge(clampAge(Number(event.target.value)))}
-                className="mt-6 w-full accent-[var(--accent)]"
-              />
-              <div className="mt-2 flex justify-between text-sm text-white/60">
-                <span>18</span>
-                <span>39+</span>
+              <div className="mt-6">
+                {step === "style" ? (
+                  <>
+                    <div
+                      role="group"
+                      aria-label="Who to create"
+                      className="inline-flex rounded-full border border-[var(--line)] bg-[var(--surface)] p-1"
+                    >
+                      {(["girls", "guys"] as const).map((item) => {
+                        const on = section === item;
+                        return (
+                          <button
+                            key={item}
+                            type="button"
+                            aria-pressed={on}
+                            onClick={() => goSection(item)}
+                            className={cx(
+                              "flex h-10 items-center gap-2 rounded-full px-5 text-sm font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)] sm:px-6",
+                              on ? "bg-[var(--accent)] text-[var(--accent-ink)]" : "text-[var(--muted)] hover:text-[var(--ink)]",
+                            )}
+                          >
+                            {item === "girls" ? <FemaleIcon className="h-4 w-4" /> : <MaleIcon className="h-4 w-4" />}
+                            {item === "girls" ? "Girl" : "Guy"}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-5 grid max-w-2xl grid-cols-2 gap-3 sm:gap-5">
+                      {STYLE_CARDS[section].map((card) => (
+                        <ImageTile
+                          key={`${section}-${card.id}`}
+                          size="lg"
+                          src={card.src}
+                          frames={STYLE_FRAMES[section][card.id]}
+                          label={card.label}
+                          detail={card.detail}
+                          selected={style === card.id}
+                          onClick={() => {
+                            setStyle(card.id);
+                            setStepError(null);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+
+                {step === "look" ? (
+                  <>
+                    <ChoiceGroup id="ethnicity" title="Ethnicity" value={ethnicity} hint="Pick one">
+                      <div className="grid grid-cols-4 gap-2 sm:gap-3">
+                        {ethnicities.map((item) => (
+                          <ImageTile
+                            key={item.id}
+                            size="sm"
+                            src={ethnicitySrc(item.id)}
+                            label={item.id}
+                            selected={ethnicity === item.id}
+                            onClick={() => setEthnicity(item.id)}
+                          />
+                        ))}
+                      </div>
+                    </ChoiceGroup>
+                    <ChoiceGroup id="age" title="Age" value={`${ageLabel(age)} years`}>
+                      <AgePicker age={age} min={MIN_AGE} max={MAX_AGE} onChange={(value) => setAge(clampAge(value))} />
+                    </ChoiceGroup>
+                    <ChoiceGroup id="eyes" title="Eye color" value={eyeColor} hint="Pick one">
+                      <div className="grid grid-cols-6 gap-1 rounded-2xl border border-[var(--line)] bg-[var(--surface)] px-2 py-3 sm:gap-3 sm:px-4 sm:py-4">
+                        {EYE_COLORS.map((item) => (
+                          <EyeTile
+                            key={item.id}
+                            src={item.src}
+                            label={item.id}
+                            selected={eyeColor === item.id}
+                            onClick={() => setEyeColor(item.id)}
+                          />
+                        ))}
+                      </div>
+                    </ChoiceGroup>
+                    <ChoiceGroup id="hair-style" title="Hair style" value={hairStyle} hint="Pick one">
+                      <div className="grid grid-cols-4 gap-2 sm:gap-3">
+                        {hairStyles.map((item) => (
+                          <ImageTile
+                            key={item.id}
+                            size="sm"
+                            src={look === "anime" ? item.anime : item.src}
+                            label={item.id}
+                            selected={hairStyle === item.id}
+                            onClick={() => setHairStyle(item.id)}
+                          />
+                        ))}
+                      </div>
+                    </ChoiceGroup>
+                    <ChoiceGroup id="hair-color" title="Hair color" value={hair} hint="Pick one">
+                      <div className="grid grid-cols-4 gap-2 sm:gap-3">
+                        {HAIR.map((item) => (
+                          <ImageTile
+                            key={item.id}
+                            size="sm"
+                            src={girls ? item.src : GUY_HAIR[look][item.id]}
+                            label={item.id}
+                            swatch={item.swatch}
+                            selected={hair === item.id}
+                            onClick={() => setHair(item.id)}
+                          />
+                        ))}
+                      </div>
+                    </ChoiceGroup>
+                  </>
+                ) : null}
+
+                {step === "body" ? (
+                  <>
+                    <ChoiceGroup id="body" title="Body type" value={body} hint="Pick one">
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        {bodies.map((item) => (
+                          <ImageTile
+                            key={item.id}
+                            src={item.src}
+                            label={item.id}
+                            selected={body === item.id}
+                            onClick={() => setBody(item.id)}
+                          />
+                        ))}
+                      </div>
+                    </ChoiceGroup>
+                    {girls ? (
+                      <ChoiceGroup id="breast" title="Breast size" value={breast} hint="Pick one">
+                        <div className="grid grid-cols-3 gap-3 sm:max-w-[75%]">
+                          {BREASTS.map((item) => (
+                            <ImageTile
+                              key={item.id}
+                              src={item.src}
+                              label={item.id}
+                              selected={breast === item.id}
+                              onClick={() => setBreast(item.id)}
+                            />
+                          ))}
+                        </div>
+                      </ChoiceGroup>
+                    ) : null}
+                  </>
+                ) : null}
+
+                {step === "personality" ? (
+                  <>
+                    <ChoiceGroup id="personality" title="Personality" value={personality}>
+                      <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-3">
+                        {PERSONALITIES.map((item) => (
+                          <OptionCard
+                            key={item}
+                            title={item}
+                            detail={PERSONALITY_INFO[item]}
+                            selected={personality === item}
+                            onClick={() => setPersonality(item)}
+                          />
+                        ))}
+                      </div>
+                    </ChoiceGroup>
+                    <ChoiceGroup id="occupation" title="Occupation" value={occupation}>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+                        {JOBS.map((item) => (
+                          <OptionCard key={item} compact title={item} selected={occupation === item} onClick={() => setOccupation(item)} />
+                        ))}
+                      </div>
+                    </ChoiceGroup>
+                  </>
+                ) : null}
+
+                {step === "relationship" ? (
+                  <>
+                    <ChoiceGroup id="role" title="Relationship" value={role}>
+                      <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                        {roles.map((item) => (
+                          <OptionCard key={item} title={item} detail={ROLE_INFO[item]} selected={role === item} onClick={() => setRole(item)} />
+                        ))}
+                      </div>
+                    </ChoiceGroup>
+                    <ChoiceGroup id="kinks" title="Kinks" value={`${kinks.length} of 3`}>
+                      <p className="-mt-1 mb-3 text-sm text-[var(--muted)]">Pick 1 to 3. Tap again to remove.</p>
+                      <div className="flex flex-wrap gap-2">
+                        {KINKS.map((kink) => {
+                          const on = kinks.includes(kink);
+                          const full = !on && kinks.length >= 3;
+                          return (
+                            <Chip
+                              key={kink}
+                              active={on}
+                              disabled={full}
+                              onClick={() => {
+                                toggleKink(kink);
+                                setStepError(null);
+                              }}
+                              className={cx("h-10 px-5", full && "opacity-40")}
+                            >
+                              {on ? <CheckIcon className="h-3.5 w-3.5" /> : null}
+                              {kink}
+                            </Chip>
+                          );
+                        })}
+                      </div>
+                    </ChoiceGroup>
+                  </>
+                ) : null}
+
+                {step === "voice" ? (
+                  <>
+                    <ChoiceGroup id="name" title="Name">
+                      <div className="flex gap-2">
+                        <input
+                          value={name}
+                          maxLength={NAME_MAX}
+                          aria-label="Name"
+                          aria-invalid={problem ? true : undefined}
+                          aria-describedby="name-rule name-problem"
+                          autoComplete="off"
+                          onChange={(event) => {
+                            setName(event.target.value);
+                            setStepError(null);
+                          }}
+                          className={cx(inputClass, "h-12 text-base font-semibold", problem && "border-red-400/70 focus:border-red-400")}
+                        />
+                        <Button variant="secondary" size="lg" onClick={shuffleName} aria-label="Shuffle name" className="px-4">
+                          <ShuffleIcon className="h-5 w-5" />
+                          <span className="hidden sm:inline">Shuffle</span>
+                        </Button>
+                      </div>
+                      <div className="mt-2 flex items-start justify-between gap-3 text-xs leading-5">
+                        <p id="name-rule" className="text-[var(--muted)]">
+                          {NAME_RULE}
+                        </p>
+                        <span className={cx("shrink-0 tabular-nums", cleanName.length > NAME_MAX ? "text-red-300" : "text-[var(--muted)]")}>
+                          {cleanName.length}/{NAME_MAX}
+                        </span>
+                      </div>
+                      <p id="name-problem" aria-live="polite" className="mt-1 text-sm text-red-300">
+                        {problem ?? ""}
+                      </p>
+                    </ChoiceGroup>
+                    <ChoiceGroup id="voice" title="Voice" value={voiceInfo?.description ?? voice}>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
+                        {voices.map((item) => (
+                          <OptionCard
+                            key={item.id}
+                            title={item.description}
+                            detail={`${item.id} · ${item.tone}`}
+                            selected={voice === item.id}
+                            onClick={() => setVoice(item.id)}
+                          />
+                        ))}
+                      </div>
+                    </ChoiceGroup>
+                    <div className="mt-8 lg:hidden">{creditsPanel}</div>
+                  </>
+                ) : null}
+
+                {step === "portrait" ? (
+                  <div className="grid items-start gap-6 md:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] md:gap-8 lg:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
+                    <div className="mx-auto w-full max-w-md md:mx-0">
+                      {portrait?.url ? (
+                        <div className="relative">
+                          <MediaImage
+                            key={portrait.id}
+                            url={portrait.url}
+                            alt={`Portrait of ${cleanName}`}
+                            className="aspect-[3/4] w-full rounded-3xl object-cover ring-1 ring-white/10"
+                          />
+                          {drawing ? null : (
+                            <button
+                              type="button"
+                              onClick={() => void drawPortrait()}
+                              disabled={saving}
+                              aria-label={`Regenerate portrait, ${COSTS.portrait} credits`}
+                              className="absolute bottom-3 right-3 flex h-10 items-center gap-2 rounded-full bg-black/60 px-4 text-sm font-semibold text-white backdrop-blur transition hover:bg-black/75 disabled:opacity-50 md:hidden"
+                            >
+                              <RefreshIcon className="h-4 w-4" />
+                              Regenerate · {COSTS.portrait}
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <div
+                          className="relative flex aspect-[3/4] w-full flex-col items-center justify-center gap-4 overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--surface)] px-6 text-center"
+                          aria-live="polite"
+                        >
+                          <img
+                            src={preview}
+                            alt=""
+                            className={cx(
+                              "absolute inset-0 h-full w-full scale-110 object-cover blur-2xl",
+                              drawing ? "opacity-30" : "opacity-15",
+                            )}
+                          />
+                          {drawing ? (
+                            <>
+                              <span className="relative h-10 w-10 animate-spin rounded-full border-[3px] border-white/15 border-t-[var(--accent)]" aria-hidden />
+                              <span className="relative text-sm font-semibold text-[var(--ink)]">Drawing this character from your choices…</span>
+                            </>
+                          ) : (
+                            <>
+                              <span
+                                className={cx(
+                                  "relative flex h-12 w-12 items-center justify-center rounded-2xl",
+                                  needsCredits ? "bg-[var(--premium)]/15 text-[var(--premium)]" : "bg-red-500/10 text-red-300",
+                                )}
+                                aria-hidden
+                              >
+                                {needsCredits ? <CoinIcon className="h-6 w-6" /> : <RefreshIcon className="h-6 w-6" />}
+                              </span>
+                              <span className="relative max-w-xs text-sm font-semibold text-[var(--ink)]">
+                                {portraitError ?? "Something went wrong. Try again."}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex min-w-0 flex-col gap-4">
+                      <Panel className="p-5">
+                        <p className="text-2xl font-bold tracking-tight text-[var(--ink)]">
+                          {cleanName} <span className="font-medium text-[var(--muted)]">{ageLabel(age)}</span>
+                        </p>
+                        <p className="mt-1 text-sm text-[var(--muted)]">
+                          {[role, personality, occupation].filter(Boolean).join(" · ")}
+                        </p>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {[
+                            styleName,
+                            ethnicity,
+                            eyeColor && `${eyeColor} eyes`,
+                            hairStyle && `${hairStyle} hair`,
+                            hair && `${hair} hair`,
+                            body,
+                            girls && breast ? `${breast} breasts` : null,
+                            voiceInfo ? `${voiceInfo.description} voice` : null,
+                            ...kinks,
+                          ]
+                            .filter((chip): chip is string => Boolean(chip))
+                            .map((chip) => (
+                              <span
+                                key={chip}
+                                className="rounded-full border border-[var(--line)] bg-[var(--surface-2)] px-3 py-1 text-xs font-medium text-[var(--ink)]"
+                              >
+                                {chip}
+                              </span>
+                            ))}
+                        </div>
+                        {portrait && !drawing ? (
+                          <div className="mt-5 hidden border-t border-[var(--line)] pt-4 md:block">
+                            <Button variant="secondary" size="md" onClick={() => void drawPortrait()} disabled={saving}>
+                              <RefreshIcon className="h-4 w-4" />
+                              Regenerate · {COSTS.portrait} credits
+                            </Button>
+                            <p className="mt-2 text-xs leading-5 text-[var(--muted)]">
+                              Not quite right? Draw a new one from the same choices
+                              {balance ? `. You have ${balance} credits.` : "."}
+                            </p>
+                          </div>
+                        ) : null}
+                      </Panel>
+                      <p className="text-xs leading-5 text-[var(--muted)]">
+                        {cleanName || "This character"} is an AI character and the portrait is AI-generated. Every character on
+                        Simulust is a fictional adult.
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
               </div>
-            </div>
-            <h2 className="mt-10 text-center text-3xl font-semibold">Eye color</h2>
-            <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
-              {EYE_COLORS.map((item) => (
-                <EyeColorCard
-                  key={item.id}
-                  src={item.src}
-                  label={item.id}
-                  selected={eyeColor === item.id}
-                  onClick={() => {
-                    setEyeColor(item.id);
-                    setStepError(null);
-                  }}
-                />
-              ))}
-            </div>
-            <StepNav error={stepError} onPrev={back} onNext={next} />
-          </section>
-        ) : null}
 
-        {step === "hair" ? (
-          <section>
-            <h1 className="text-center text-3xl font-semibold">Hair style</h1>
-            <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {hairStyles.map((item) => (
-                <PictureCard
-                  key={item.id}
-                  src={look === "anime" ? item.anime : item.src}
-                  label={item.id}
-                  selected={hairStyle === item.id}
-                  onClick={() => {
-                    setHairStyle(item.id);
-                    setStepError(null);
-                  }}
-                />
-              ))}
-            </div>
-            <h2 className="mt-10 text-center text-3xl font-semibold">Hair color</h2>
-            <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {HAIR.map((item) => (
-                <PictureCard
-                  key={item.id}
-                  src={section === "girls" ? item.src : GUY_HAIR[look][item.id]}
-                  label={item.id}
-                  selected={hair === item.id}
-                  onClick={() => {
-                    setHair(item.id);
-                    setStepError(null);
-                  }}
-                />
-              ))}
-            </div>
-            <StepNav error={stepError} onPrev={back} onNext={next} />
-          </section>
-        ) : null}
-
-        {step === "body" ? (
-          <section>
-            <h1 className="text-center text-3xl font-semibold">Body type</h1>
-            {section === "girls" ? (
-              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {BODIES.map((item) => (
-                  <PictureCard
-                    key={item.id}
-                    src={item.src}
-                    label={item.id}
-                    selected={body === item.id}
-                    onClick={() => {
-                      setBody(item.id);
-                      setStepError(null);
-                    }}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {GUY_BODIES.map((item) => (
-                  <PictureCard
-                    key={item.id}
-                    src={item.src}
-                    label={item.id}
-                    selected={body === item.id}
-                    onClick={() => {
-                      setBody(item.id);
-                      setStepError(null);
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-            <StepNav error={stepError} onPrev={back} onNext={next} />
-          </section>
-        ) : null}
-
-        {step === "breast" ? (
-          <section>
-            <h1 className="text-center text-3xl font-semibold">Breast size</h1>
-            <div className="mt-6 grid grid-cols-3 gap-3">
-              {BREASTS.map((item) => (
-                <PictureCard
-                  key={item.id}
-                  src={item.src}
-                  label={item.id}
-                  selected={breast === item.id}
-                  onClick={() => {
-                    setBreast(item.id);
-                    setStepError(null);
-                  }}
-                />
-              ))}
-            </div>
-            <StepNav error={stepError} onPrev={back} onNext={next} />
-          </section>
-        ) : null}
-
-        {step === "train" ? (
-          <section>
-            <h1 className="text-center text-3xl font-semibold">Choose a name</h1>
-            <div className="mt-4 flex items-center rounded-xl border border-white/10 bg-[#171717]">
-              <input
-                value={name}
-                maxLength={30}
-                aria-label="Name"
-                onChange={(event) => {
-                  setName(event.target.value);
-                  setStepError(null);
-                }}
-                className="w-full bg-transparent px-4 py-3 outline-none"
-              />
-              <button type="button" className="px-4 text-white/70" onClick={shuffleName} aria-label="Shuffle name">
-                Shuffle
-              </button>
-            </div>
-            <p className="mt-1 text-right text-xs text-white/40">{name.trim().length}/30</p>
-
-            <h2 className="mt-8 text-center text-3xl font-semibold">Choose personality</h2>
-            <p className="text-center text-sm text-white/50">Click to change</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <Field
-                label="Choose personality"
-                value={personality}
-                open={openField === "personality"}
-                options={PERSONALITIES}
-                onToggle={() => setOpenField(openField === "personality" ? null : "personality")}
-                onPick={(value) => {
-                  setPersonality(value);
-                  setOpenField(null);
-                }}
-              />
-              <Field
-                label="Choose relationship"
-                value={role}
-                open={openField === "role"}
-                options={roles}
-                onToggle={() => setOpenField(openField === "role" ? null : "role")}
-                onPick={(value) => {
-                  setRole(value);
-                  setOpenField(null);
-                }}
-              />
-              <Field
-                label="Choose occupation"
-                value={occupation}
-                open={openField === "job"}
-                options={JOBS}
-                onToggle={() => setOpenField(openField === "job" ? null : "job")}
-                onPick={(value) => {
-                  setOccupation(value);
-                  setOpenField(null);
-                }}
-              />
-              <div className="rounded-2xl border border-white/10 bg-[#171717] p-4">
-                <p className="text-xs uppercase text-white/45">Kinks, max 3</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {KINKS.map((kink) => {
-                    const on = kinks.includes(kink);
-                    return (
-                      <button
-                        key={kink}
-                        type="button"
-                        onClick={() => {
-                          toggleKink(kink);
-                          setStepError(null);
-                        }}
-                        className={`rounded-full border px-3 py-1 text-sm ${
-                          on ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-white/15"
-                        }`}
-                      >
-                        {kink}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-            <div className="mt-3">
-              <Field
-                label="Choose voice"
-                value={voice}
-                open={openField === "voice"}
-                options={VOICES}
-                onToggle={() => setOpenField(openField === "voice" ? null : "voice")}
-                onPick={(value) => {
-                  setVoice(value);
-                  setOpenField(null);
-                }}
-              />
-            </div>
-            <p className="mt-6 text-center text-sm text-white/60">
-              {me
-                ? `A portrait uses ${COSTS.portrait} credits. You have ${me.balance.toLocaleString("en-US")}.`
-                : `A portrait uses ${COSTS.portrait} credits. New accounts start with ${FREE.signupCredits} free.`}
-            </p>
-            <StepNav
-              error={stepError}
-              onPrev={back}
-              onNext={tryGenerate}
-              nextLabel={`Generate portrait · ${COSTS.portrait} credits`}
-            />
-          </section>
-        ) : null}
-
-        {step === "portrait" ? (
-          <section>
-            <h1 className="text-center text-3xl font-semibold">Your character</h1>
-            <p className="mt-2 text-center text-sm text-white/50">
-              {section === "girls"
-                ? "Drawn from the style, ethnicity, age, hair, body, breast size, and personality you picked."
-                : "Drawn from the style, ethnicity, age, hair, body, and personality you picked."}
-            </p>
-            <div className="mx-auto mt-6 max-w-sm">
-              {portrait?.url ? (
-                <MediaImage key={portrait.id} url={portrait.url} className="aspect-[3/4] w-full rounded-2xl object-cover" />
-              ) : (
-                <div
-                  className="flex aspect-[3/4] w-full flex-col items-center justify-center gap-3 rounded-2xl border border-white/10 bg-[#171717] px-6 text-center text-white/70"
-                  aria-live="polite"
-                >
-                  {drawing ? (
-                    <>
-                      <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/15 border-t-[var(--gold)]" aria-hidden />
-                      <span>Drawing this character from your choices…</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>{portraitError ?? "Something went wrong. Try again."}</span>
-                      {needsCredits ? (
-                        <Link href="/premium" className="rounded-full bg-[var(--gold)] px-4 py-2 text-sm font-medium !text-[#12110F]">
-                          Get credits
-                        </Link>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              )}
-              {portrait && !drawing ? (
-                <button
-                  type="button"
-                  className="mx-auto mt-3 block text-sm text-white/60 underline-offset-4 hover:text-white hover:underline"
-                  onClick={drawPortrait}
-                >
-                  Redraw · {COSTS.portrait} credits
-                </button>
-              ) : null}
-            </div>
-            <div className="mt-4 flex flex-wrap justify-center gap-2 text-xs text-white/70">
-              {[
-                look === "anime" ? "Anime" : "Realistic",
-                ethnicity,
-                age >= 39 ? "39+" : `${age}`,
-                eyeColor,
-                hairStyle,
-                hair,
-                body,
-                section === "girls" ? breast : null,
-                personality,
-                occupation,
-              ]
-                .filter(Boolean)
-                .map((chip) => (
-                  <span key={chip} className="rounded-full border border-white/15 px-3 py-1">
-                    {chip}
-                  </span>
-                ))}
-            </div>
-            {saveError ? <p className="mt-6 text-center text-sm text-red-400">{saveError}</p> : null}
-            <div className="mt-8 flex gap-3">
-              <button
-                type="button"
-                className="w-full rounded-full border border-white/20 py-3 font-medium"
-                onClick={back}
-                disabled={saving}
+              <ActionBar
+                onBack={index > 0 ? back : undefined}
+                backDisabled={saving}
+                hint={hint}
+                message={stepError ?? (step === "portrait" ? saveError : null)}
               >
-                Previous
-              </button>
-              {portraitError && !drawing ? (
-                needsCredits ? (
-                  <Link
-                    href="/premium"
-                    className="w-full rounded-full bg-[var(--accent)] py-3 text-center font-medium"
-                  >
-                    Get credits
-                  </Link>
-                ) : (
-                  <button
-                    type="button"
-                    className="w-full rounded-full border border-white/20 py-3 font-medium"
-                    onClick={session ? drawPortrait : openLogin}
-                  >
-                    {session ? `Try again · ${COSTS.portrait} credits` : "Log in"}
-                  </button>
-                )
-              ) : (
-                <button
-                  type="button"
-                  disabled={!portrait || drawing || saving}
-                  className="w-full rounded-full bg-[var(--accent)] py-3 font-medium disabled:opacity-40"
-                  onClick={finish}
-                >
-                  {saving ? "Saving…" : "Start the date"}
-                </button>
-              )}
+                {primary}
+              </ActionBar>
             </div>
-          </section>
-        ) : null}
+          </div>
+
+          {step !== "portrait" ? (
+            <SummaryPanel
+              preview={preview}
+              title={furthest >= VOICE_INDEX && !problem ? cleanName : girls ? "Your AI girl" : "Your AI guy"}
+              subtitle={style ? [styleName, ethnicity, furthest >= 1 ? `${ageLabel(age)} years` : null].filter(Boolean).join(" · ") : "Pick a style to start"}
+              rows={summaryRows}
+              current={index}
+              canVisit={canVisit}
+              onGo={(target) => goTo(steps[target])}
+              footer={creditsPanel}
+            />
+          ) : null}
+        </div>
       </div>
     </AppShell>
-  );
-}
-
-function StepNav({
-  error,
-  onNext,
-  onPrev,
-  nextLabel = "Next",
-}: {
-  error: string | null;
-  onNext: () => void;
-  onPrev?: () => void;
-  nextLabel?: string;
-}) {
-  return (
-    <div className="mt-8">
-      {error ? <p className="mb-3 text-center text-sm text-red-400">{error}</p> : null}
-      <div className="flex gap-3">
-        {onPrev ? (
-          <button
-            type="button"
-            className="w-full rounded-full border border-white/20 py-3 font-medium"
-            onClick={onPrev}
-          >
-            Previous
-          </button>
-        ) : null}
-        <button type="button" className="w-full rounded-full bg-[var(--accent)] py-3 font-medium" onClick={onNext}>
-          {nextLabel}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  value,
-  open,
-  options,
-  onToggle,
-  onPick,
-}: {
-  label: string;
-  value: string;
-  open: boolean;
-  options: readonly string[];
-  onToggle: () => void;
-  onPick: (value: string) => void;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-[#171717] p-4">
-      <button type="button" onClick={onToggle} className="flex w-full items-center justify-between text-left">
-        <span>
-          <span className="block text-xs uppercase text-white/45">{label}</span>
-          <span className="mt-1 block text-lg font-semibold">{value}</span>
-        </span>
-        <span className="text-white/50">Edit</span>
-      </button>
-      {open ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {options.map((option) => (
-            <button
-              key={option}
-              type="button"
-              onClick={() => onPick(option)}
-              className={`rounded-full border px-3 py-1 text-sm ${
-                option === value ? "border-white bg-white text-black" : "border-white/15"
-              }`}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
   );
 }
