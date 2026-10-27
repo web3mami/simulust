@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      # The text-safety tests run the GPU worker's prompt screen to prove it
+      # refuses what the app refuses; 3.11 matches the worker's image.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Worker syntax
+        run: python -m py_compile workers/media/*.py
+
+      - name: Tests
+        run: npm test
+
+      # A real deploy needs the NEXT_PUBLIC_* values; this only proves it compiles.
+      - name: Build
+        run: npm run build
+        env:
+          ALLOW_DEV_BUILD: "1"
