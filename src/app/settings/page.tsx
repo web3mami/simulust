@@ -2,13 +2,35 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { AppHeader, AppShell } from "@/components/app-shell";
+import { useState, type ReactNode } from "react";
+import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
-import { useApi, useAuthHeaders } from "@/lib/api";
-import type { Me } from "@/lib/api-types";
+import {
+  ACCOUNT_PAGE,
+  AccountNav,
+  AgeStatusBadge,
+  Notice,
+  SectionCard,
+  SignInPrompt,
+  SkeletonCard,
+  fieldLabel,
+  solidDangerClass,
+} from "@/components/account/account-ui";
+import { DownloadIcon, TrashIcon } from "@/components/account/account-icons";
+import { SettingsIcon, ShieldIcon } from "@/components/icons";
+import { PageHeader, buttonClass, cx, inputClass } from "@/components/ui";
+import { ApiError, useApi, useAuthHeaders } from "@/lib/api";
+import type { AgeStatus, Me } from "@/lib/api-types";
 
 type SettingKey = "explicit" | "unpromptedMedia";
+
+// What the verification card says for each age-check state.
+const AGE_LINE: Record<AgeStatus, string> = {
+  none: "Explicit messages, photos, voice notes and video stay locked until you verify. It's a one-time ID check.",
+  pending: "We're waiting for the result of your check.",
+  approved: "You're verified. Explicit content is yours to turn on above.",
+  declined: "Your last check didn't go through. You can try again.",
+};
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -21,7 +43,7 @@ export default function SettingsPage() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<{ message: string; hold: boolean } | null>(null);
 
   async function toggle(key: SettingKey, value: boolean) {
     setSaving(key);
@@ -71,149 +93,184 @@ export default function SettingsPage() {
       signOut();
       router.replace("/");
     } catch (caught) {
-      setDeleteError(caught instanceof Error ? caught.message : "We couldn't delete your account. Try again.");
+      setDeleteError({
+        message: caught instanceof Error ? caught.message : "We couldn't delete your account. Try again.",
+        // 409 deletion_on_hold: some content is under review, so support deletes it later.
+        hold: caught instanceof ApiError && caught.code === "deletion_on_hold",
+      });
       setDeleting(false);
     }
   }
 
+  let content: ReactNode;
+  if (!ready || (session && !me)) {
+    content = (
+      <div className="space-y-6" aria-busy="true" aria-label="Loading your settings">
+        <SkeletonCard lines={4} />
+        <SkeletonCard lines={2} />
+      </div>
+    );
+  } else if (!me) {
+    content = (
+      <SignInPrompt
+        title="Sign in to change your settings."
+        body="Choose what characters can send you, download your data, or delete your account."
+        onLogin={openLogin}
+        onSignup={openSignup}
+      />
+    );
+  } else {
+    const verified = me.ageStatus === "approved";
+    content = (
+      <div className="space-y-6">
+        <SectionCard
+          title="Preferences"
+          description="What characters can write and send you."
+          icon={<SettingsIcon />}
+        >
+          <div className="divide-y divide-[var(--line)] border-t border-[var(--line)]">
+            <Row
+              title="Explicit content"
+              body={
+                me.ageVerified ? (
+                  <>
+                    Lets characters write explicitly and send explicit photos, voice notes and video when you ask.
+                    Turning this on means you agree to us processing your chats, which may reveal details of your sex
+                    life, to run the service. Turn it off any time. See our{" "}
+                    <Link href="/privacy" className="!text-[var(--accent)] underline underline-offset-2">
+                      privacy policy
+                    </Link>
+                    .
+                  </>
+                ) : (
+                  <>
+                    Needs a one-time ID check first.{" "}
+                    <Link href="/verify" className="font-semibold !text-[var(--accent)] underline underline-offset-2">
+                      Verify your age
+                    </Link>
+                    .
+                  </>
+                )
+              }
+              control={
+                <Toggle
+                  label="Explicit content"
+                  on={me.settings.explicit}
+                  disabled={!me.ageVerified || saving !== null}
+                  busy={saving === "explicit"}
+                  onChange={(value) => toggle("explicit", value)}
+                />
+              }
+            />
+            <Row
+              title="Photos and voice notes without asking"
+              body="Characters can send a photo or voice note on their own now and then. Off means they only send media when you ask. Media still costs credits."
+              control={
+                <Toggle
+                  label="Photos and voice notes without asking"
+                  on={me.settings.unpromptedMedia}
+                  disabled={saving !== null}
+                  busy={saving === "unpromptedMedia"}
+                  onChange={(value) => toggle("unpromptedMedia", value)}
+                />
+              }
+            />
+          </div>
+          {settingsError ? (
+            <Notice role="alert" className="mt-3">
+              {settingsError}
+            </Notice>
+          ) : null}
+        </SectionCard>
+
+        <SectionCard
+          title="Age verification"
+          description={AGE_LINE[me.ageStatus]}
+          icon={<ShieldIcon />}
+          action={<AgeStatusBadge status={me.ageStatus} />}
+        >
+          <Link
+            href="/verify"
+            className={buttonClass(verified || me.ageStatus === "pending" ? "secondary" : "primary", "md")}
+          >
+            {verified ? "View verification" : me.ageStatus === "pending" ? "Check status" : "Verify your age"}
+          </Link>
+        </SectionCard>
+
+        <SectionCard
+          title="Your data"
+          description="One JSON file with your account, profile, characters, chats, memories, orders and credit history."
+          icon={<DownloadIcon />}
+        >
+          <button type="button" disabled={exporting} className={buttonClass("secondary", "md")} onClick={exportData}>
+            <DownloadIcon className="h-4 w-4" />
+            {exporting ? "Preparing…" : "Download my data"}
+          </button>
+          {exportError ? (
+            <Notice role="alert" className="mt-3">
+              {exportError}
+            </Notice>
+          ) : null}
+        </SectionCard>
+
+        <SectionCard
+          tone="danger"
+          title="Delete account"
+          icon={<TrashIcon />}
+          description={
+            <>
+              This permanently deletes your account, characters, chats, memories, photos, voice notes and videos, and
+              any credits you have left. It can&apos;t be undone. Download your data first if you want a copy.
+            </>
+          }
+        >
+          <label className="block max-w-md">
+            <span className={cx(fieldLabel, "font-medium text-[var(--muted)]")}>
+              Type <span className="font-bold text-[var(--ink)]">DELETE</span> to confirm
+            </span>
+            <input
+              value={confirmText}
+              onChange={(event) => setConfirmText(event.target.value)}
+              autoComplete="off"
+              className={cx(inputClass, "mt-2 h-11 focus:border-red-400")}
+            />
+          </label>
+          <button
+            type="button"
+            disabled={confirmText !== "DELETE" || deleting}
+            className={solidDangerClass("md", "mt-4")}
+            onClick={deleteAccount}
+          >
+            {deleting ? "Deleting…" : "Delete my account"}
+          </button>
+          {deleteError ? (
+            <Notice role="alert" tone={deleteError.hold ? "hold" : "error"} className="mt-4">
+              {deleteError.hold ? <span className="mb-1 block font-semibold">Deletion is on hold</span> : null}
+              {deleteError.message}
+            </Notice>
+          ) : null}
+        </SectionCard>
+      </div>
+    );
+  }
+
   return (
     <AppShell>
-      <AppHeader />
-      <section className="mx-auto w-full max-w-xl px-4 py-10">
-        <h1 className="font-[family-name:var(--font-display)] text-4xl text-[var(--ink)]">Settings</h1>
-
-        {!ready || (session && !me) ? (
-          <p className="mt-8 text-sm text-[var(--muted)]">Loading…</p>
-        ) : !me ? (
-          <div className="mt-8">
-            <p className="text-[var(--muted)]">Sign in to change your settings.</p>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <button
-                type="button"
-                className="rounded-full border border-white/20 px-5 py-2.5 text-sm text-[var(--ink)]"
-                onClick={openLogin}
-              >
-                Login
-              </button>
-              <button
-                type="button"
-                className="rounded-full bg-[var(--gold)] px-5 py-2.5 text-sm font-medium !text-[#12110F]"
-                onClick={openSignup}
-              >
-                Sign up
-              </button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <h2 className="mt-10 text-xs uppercase tracking-wide text-[var(--muted)]">Content</h2>
-            <div className="mt-3 divide-y divide-[var(--line)] rounded-3xl border border-[var(--line)] bg-[var(--bg-2)]">
-              <Row
-                title="Explicit content"
-                body={
-                  me.ageVerified ? (
-                    <>
-                      Lets characters write explicitly and send explicit photos, voice notes and video when you ask.
-                      Turning this on means you agree to us processing your chats, which may reveal details of your sex
-                      life, to run the service. Turn it off any time. See our{" "}
-                      <Link href="/privacy" className="text-[var(--gold)] underline underline-offset-2">
-                        privacy policy
-                      </Link>
-                      .
-                    </>
-                  ) : (
-                    <>
-                      Needs a one-time ID check first.{" "}
-                      <Link href="/verify" className="text-[var(--gold)] underline underline-offset-2">
-                        Verify your age
-                      </Link>
-                      .
-                    </>
-                  )
-                }
-                control={
-                  <Toggle
-                    label="Explicit content"
-                    on={me.settings.explicit}
-                    disabled={!me.ageVerified || saving !== null}
-                    busy={saving === "explicit"}
-                    onChange={(value) => toggle("explicit", value)}
-                  />
-                }
-              />
-              <Row
-                title="Photos and voice notes without asking"
-                body="Characters can send a photo or voice note on their own now and then. Off means they only send media when you ask. Media still costs credits."
-                control={
-                  <Toggle
-                    label="Photos and voice notes without asking"
-                    on={me.settings.unpromptedMedia}
-                    disabled={saving !== null}
-                    busy={saving === "unpromptedMedia"}
-                    onChange={(value) => toggle("unpromptedMedia", value)}
-                  />
-                }
-              />
-            </div>
-            {settingsError ? <p className="mt-3 text-sm text-red-300">{settingsError}</p> : null}
-
-            <h2 className="mt-10 text-xs uppercase tracking-wide text-[var(--muted)]">Your data</h2>
-            <div className="mt-3 rounded-3xl border border-[var(--line)] bg-[var(--bg-2)] p-5">
-              <p className="text-[var(--ink)]">Download your data</p>
-              <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
-                One JSON file with your account, profile, characters, chats, memories, orders and credit history.
-              </p>
-              <button
-                type="button"
-                disabled={exporting}
-                className="mt-4 rounded-full border border-white/20 px-5 py-2.5 text-sm text-[var(--ink)] disabled:opacity-60"
-                onClick={exportData}
-              >
-                {exporting ? "Preparing…" : "Download my data"}
-              </button>
-              {exportError ? <p className="mt-3 text-sm text-red-300">{exportError}</p> : null}
-            </div>
-
-            <h2 className="mt-10 text-xs uppercase tracking-wide text-red-300">Delete account</h2>
-            <div className="mt-3 rounded-3xl border border-red-400/30 bg-red-500/5 p-5">
-              <p className="text-sm leading-6 text-[var(--muted)]">
-                This permanently deletes your account, characters, chats, memories, photos, voice notes and videos, and
-                any credits you have left. It can&apos;t be undone. Download your data first if you want a copy.
-              </p>
-              <label className="mt-4 block">
-                <span className="text-xs text-[var(--muted)]">
-                  Type <span className="font-medium text-[var(--ink)]">DELETE</span> to confirm
-                </span>
-                <input
-                  value={confirmText}
-                  onChange={(event) => setConfirmText(event.target.value)}
-                  autoComplete="off"
-                  className="mt-2 w-full rounded-2xl border border-[var(--line)] bg-transparent px-4 py-3 text-[var(--ink)] outline-none focus:border-red-400"
-                />
-              </label>
-              <button
-                type="button"
-                disabled={confirmText !== "DELETE" || deleting}
-                className="mt-4 rounded-full bg-red-500/90 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40"
-                onClick={deleteAccount}
-              >
-                {deleting ? "Deleting…" : "Delete my account"}
-              </button>
-              {deleteError ? <p className="mt-3 text-sm text-red-300">{deleteError}</p> : null}
-            </div>
-          </>
-        )}
-      </section>
+      <div className={ACCOUNT_PAGE}>
+        <PageHeader title="Settings" accent="Account" subtitle="Content preferences, age verification and your data." />
+        <AccountNav className="mt-5" />
+        <div className="mt-6">{content}</div>
+      </div>
     </AppShell>
   );
 }
 
-function Row({ title, body, control }: { title: string; body: React.ReactNode; control: React.ReactNode }) {
+function Row({ title, body, control }: { title: string; body: ReactNode; control: ReactNode }) {
   return (
-    <div className="flex items-start gap-4 p-5">
+    <div className="flex items-start gap-4 py-4 last:pb-0">
       <div className="min-w-0 flex-1">
-        <p className="text-[var(--ink)]">{title}</p>
-        <p className="mt-1 text-sm leading-6 text-[var(--muted)]">{body}</p>
+        <p className="font-semibold text-[var(--ink)]">{title}</p>
+        <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">{body}</p>
       </div>
       <div className="shrink-0 pt-0.5">{control}</div>
     </div>
@@ -242,17 +299,24 @@ function Toggle({
       aria-busy={busy}
       disabled={disabled}
       onClick={() => onChange(!on)}
-      className={`relative h-7 w-12 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-        on ? "bg-[var(--gold)]" : "bg-white/15"
-      }`}
+      // A 40px tall hit area around the 28px track.
+      className="group flex h-10 w-14 items-center justify-center rounded-full disabled:cursor-not-allowed disabled:opacity-50"
     >
       <span
         aria-hidden
-        className={`absolute top-1 h-5 w-5 rounded-full bg-[var(--bg)] transition-transform ${
-          on ? "translate-x-6" : "translate-x-1"
-        } ${busy ? "animate-pulse" : ""}`}
-        style={{ left: 0 }}
-      />
+        className={cx(
+          "relative h-7 w-12 rounded-full transition-colors",
+          on ? "bg-[var(--accent)]" : "bg-white/15 group-hover:bg-white/20",
+        )}
+      >
+        <span
+          className={cx(
+            "absolute left-0 top-1 h-5 w-5 rounded-full bg-white shadow transition-transform",
+            on ? "translate-x-6" : "translate-x-1",
+            busy && "animate-pulse",
+          )}
+        />
+      </span>
     </button>
   );
 }

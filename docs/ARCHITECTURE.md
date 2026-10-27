@@ -29,6 +29,8 @@ that lacks the `NEXT_PUBLIC_*` values the browser needs.
 | `src/lib/pricing.ts` | USD catalog, per-action credit costs (shared client/server) |
 | `src/lib/api-types.ts` | Every DTO the API returns |
 | `src/lib/api.ts` | Client: `useApi()` JSON fetch with auth, `useAuthHeaders()` for streams |
+| `src/components/app-shell.tsx` | `AppShell` (top bar with the Girls/Anime/Guys lane, labeled sidebar, phone drawer and bottom bar), `useLane()`, `DocPage` |
+| `src/components/ui.tsx`, `icons.tsx` | Shared buttons, chips, cards, section titles and line icons; colours are the tokens in `globals.css` |
 | `src/components/auth-gate.tsx` | `useSession()`: `{ ready, session, me, features, suspended, refreshMe, getToken, signOut, openLogin, openSignup }` |
 
 ## Rules every route follows
@@ -65,6 +67,7 @@ works (needed for `<img src>`/`<audio src>`). Dev: `simulust-dev-user` cookie.
 | DELETE | `/api/memories?characterId=` | | `{ ok, deleted }` (forget everything; also clears the rolling summary) |
 | PATCH/DELETE | `/api/memories/[id]` | `{ content?, pinned? }` | `{ memory }` / `{ ok }` |
 | POST | `/api/portrait` | creator choices | `{ media: MediaDTO }` |
+| GET | `/api/media` | `?before=<iso>&limit=1-60&kind=image\|video` | `{ media: (MediaDTO & { characterId, threadId, createdAt })[], hasMore }`: the signed-in user's ready chat photos and videos, newest first (the Collection page) |
 | GET | `/api/media/[id]` | | the file (owner or admin only) |
 | GET | `/api/media/[id]/status` | | `{ media: MediaDTO }` |
 | POST | `/api/media/[id]/animate` | `{ prompt? }` | 202 `{ media: MediaDTO, balance }` (video, pending; poll status). Repeat requests for the same photo and motion return the same video. A motion `checkImagePrompt` refuses gets 422 before charging (`blocked_minor` or `blocked_image_prompt`, as for photo hints); 422 `video_blocked` when the worker refuses it. When the worker's tagger flags the source photo, the photo and its other videos are blocked too (files kept) pending review; a hit on the rendered frames alone blocks only the clip. |
@@ -94,7 +97,8 @@ works (needed for `<img src>`/`<audio src>`). Dev: `simulust-dev-user` cookie.
 
 ## Pages
 
-`/` discover · `/create` creator · `/date/[id]` chat · `/chat` chat list ·
+`/` home · `/discover` all characters · `/create` creator wizard · `/date/[id]` chat · `/chat` chat list ·
+`/my-ai` your characters · `/collection` your photos and videos ·
 `/memories/[characterId]` what a character remembers · `/premium`, `/packs`, `/pricing` ·
 `/profile` · `/settings` · `/verify` age verification · `/report` takedown requests ·
 `/admin` moderation console · `/terms`, `/privacy`, `/content-policy`, `/safety`, `/dmca`, `/2257`.

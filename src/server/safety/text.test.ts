@@ -5,6 +5,7 @@ import { SEED_CHARACTERS } from "@/lib/characters";
 import { buildImagePrompt } from "@/lib/portrait-prompt";
 import { asName, checkImagePrompt, checkText, declaresMinorAge, detectCrisis, minorAdjacent } from "@/server/safety/text";
 import { videoPrompt } from "@/server/video";
+import { hasPython } from "@/test/python";
 
 function expectMinor(text: string) {
   const verdict = checkText(text);
@@ -955,7 +956,7 @@ describe("checkImagePrompt: children however they're put", () => {
 
 // The worker's screen_prompt (workers/media/safety.py) mirrors these checks for
 // anything that reaches the GPU. Run it on the same strings, when Python is here.
-const python = spawnSync("python3", ["-c", "import sys; assert sys.version_info >= (3, 9)"]).status === 0;
+const python = hasPython();
 const WORKER_SCREEN = String.raw`
 import importlib.util, json, sys, types
 for name in ("numpy", "PIL", "PIL.Image"):

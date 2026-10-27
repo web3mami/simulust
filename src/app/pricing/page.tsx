@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { AppHeader, AppShell } from "@/components/app-shell";
+import { AppShell } from "@/components/app-shell";
+import { CoinIcon } from "@/components/icons";
+import { COST_ACTIONS, CheckIcon, per100 } from "@/components/premium/parts";
+import { PremiumIcon } from "@/components/premium-icon";
+import { ButtonLink, PageHeader, SectionTitle, cx } from "@/components/ui";
 import {
   COSTS,
   FREE,
@@ -10,7 +14,6 @@ import {
   PRODUCTS,
   formatCredits,
   formatUsd,
-  type CostKey,
 } from "@/lib/pricing";
 
 export const metadata: Metadata = {
@@ -18,36 +21,82 @@ export const metadata: Metadata = {
   description: "Every Simulust price in US dollars, paid in USDC or SOL. Credits never expire.",
 };
 
-const ACTIONS: { key: CostKey; label: string; note?: string }[] = [
-  { key: "message", label: "Message", note: `First ${FREE.dailyMessages} each day are free. Free for members.` },
-  { key: "voiceNote", label: "Voice note" },
-  { key: "photo", label: "Photo" },
-  { key: "portrait", label: "Character portrait", note: "When you create a character." },
-  { key: "video", label: "Video clip" },
-];
-
 // What a credit costs in the smallest pack; bigger packs are cheaper.
 const BASE = PRODUCTS[0];
 const centsPerCredit = BASE.usdCents / BASE.credits;
 const SUPPORT_EMAIL = process.env.NEXT_PUBLIC_SUPPORT_EMAIL;
+// Links need the important modifier: the unlayered `a` rule in globals.css
+// otherwise wins over colour and underline utilities.
+const LINK = "!text-[var(--accent)] !underline underline-offset-2";
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ accent, title, children }: { accent: string; title: string; children: ReactNode }) {
   return (
-    <section className="mt-10">
-      <h2 className="font-[family-name:var(--font-display)] text-2xl text-[var(--ink)]">{title}</h2>
-      <div className="mt-3 text-[15px] leading-7 text-[var(--muted)]">{children}</div>
+    <section className="mt-12">
+      <SectionTitle accent={accent}>{title}</SectionTitle>
+      <div className="mt-4 text-[15px] leading-7 text-[var(--muted)]">{children}</div>
     </section>
   );
 }
 
+function Bullets({ items }: { items: ReactNode[] }) {
+  return (
+    <ul className="space-y-2">
+      {items.map((item, index) => (
+        <li key={index} className="flex gap-3">
+          <span className="mt-1.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
+            <CheckIcon className="h-2.5 w-2.5" />
+          </span>
+          <span>{item}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// A table on wider screens; on phones each row becomes a small card so nothing
+// scrolls sideways. Columns with an empty heading read as a note.
 function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
   return (
-    <div className="mt-4 overflow-x-auto rounded-2xl border border-[var(--line)]">
-      <table className="w-full min-w-[28rem] text-left text-sm">
-        <thead className="bg-[var(--bg-2)] text-[11px] uppercase tracking-wide text-[var(--muted)]">
+    <>
+      <ul className="mt-4 space-y-2 sm:hidden">
+        {rows.map((row, index) => (
+          <li key={index} className="rounded-2xl bg-[var(--surface)] p-4 ring-1 ring-white/5">
+            <div className="font-semibold text-[var(--ink)]">{row[0]}</div>
+            <dl className="mt-2 grid grid-cols-3 gap-2 text-sm leading-6">
+              {row.slice(1).map((cell, column) =>
+                head[column + 1] ? (
+                  <div key={column}>
+                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                      {head[column + 1]}
+                    </dt>
+                    <dd className="text-[var(--ink)]">{cell}</dd>
+                  </div>
+                ) : null,
+              )}
+            </dl>
+            {row.slice(1).map((cell, column) =>
+              !head[column + 1] && cell ? (
+                <p key={column} className="mt-2 text-xs leading-5 text-[var(--muted)]">
+                  {cell}
+                </p>
+              ) : null,
+            )}
+          </li>
+        ))}
+      </ul>
+      <TableWide head={head} rows={rows} />
+    </>
+  );
+}
+
+function TableWide({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
+  return (
+    <div className="mt-4 hidden overflow-x-auto rounded-2xl bg-[var(--surface)] ring-1 ring-white/5 sm:block">
+      <table className="w-full min-w-[30rem] text-left text-sm">
+        <thead className="bg-[var(--surface-2)] text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
           <tr>
-            {head.map((cell) => (
-              <th key={cell} className="px-4 py-2.5 font-normal">
+            {head.map((cell, index) => (
+              <th key={cell || index} scope="col" className="px-4 py-3 font-semibold">
                 {cell}
               </th>
             ))}
@@ -57,7 +106,13 @@ function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
           {rows.map((row, index) => (
             <tr key={index}>
               {row.map((cell, column) => (
-                <td key={column} className={`px-4 py-3 align-top ${column === 0 ? "text-[var(--ink)]" : "text-[var(--muted)]"}`}>
+                <td
+                  key={column}
+                  className={cx(
+                    "px-4 py-3.5 align-top",
+                    column === 0 ? "font-semibold text-[var(--ink)]" : "text-[var(--muted)]",
+                  )}
+                >
                   {cell}
                 </td>
               ))}
@@ -69,90 +124,165 @@ function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
   );
 }
 
+function SummaryCard({
+  label,
+  price,
+  unit,
+  points,
+  highlight,
+  icon,
+}: {
+  label: string;
+  price: string;
+  unit?: string;
+  points: string[];
+  highlight?: boolean;
+  icon: ReactNode;
+}) {
+  return (
+    <div
+      className={cx(
+        "rounded-2xl bg-[var(--surface)] p-5",
+        highlight ? "ring-2 ring-[var(--accent)]" : "ring-1 ring-white/5",
+      )}
+    >
+      <p className="flex items-center gap-2 text-sm font-semibold text-[var(--muted)]">
+        {icon}
+        {label}
+      </p>
+      <p className="mt-3 text-3xl font-bold tracking-tight text-[var(--ink)]">
+        {price}
+        {unit ? <span className="ml-1.5 text-sm font-medium text-[var(--muted)]">{unit}</span> : null}
+      </p>
+      <ul className="mt-3 space-y-1 text-sm text-[var(--muted)]">
+        {points.map((point) => (
+          <li key={point}>{point}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function PricingPage() {
   return (
     <AppShell>
-      <AppHeader />
-      <article className="mx-auto w-full max-w-3xl px-4 py-10">
-        <h1 className="font-[family-name:var(--font-display)] text-4xl font-light text-[var(--ink)]">Pricing.</h1>
-        <p className="mt-3 text-[15px] leading-7 text-[var(--muted)]">
-          Every price, in US dollars. You pay in USDC or SOL on Solana. Credits never expire, and nothing renews on
-          its own.
-        </p>
+      <article className="mx-auto w-full max-w-4xl px-4 pb-16 pt-6 sm:px-6 sm:pt-8 lg:px-8 lg:pt-10">
+        <PageHeader
+          accent="Pricing"
+          title="and refunds"
+          subtitle="Every price, in US dollars. You pay in USDC or SOL on Solana. Credits never expire, and nothing renews on its own."
+        />
 
-        <Section title="Free">
-          <ul className="list-disc space-y-1.5 pl-5">
-            <li>{formatCredits(FREE.signupCredits)} when you sign up.</li>
-            <li>{FREE.dailyMessages} messages a day, every day. The count resets at midnight UTC.</li>
-          </ul>
+        <div className="mt-8 grid gap-3 sm:grid-cols-3 sm:gap-4">
+          <SummaryCard
+            label="Free"
+            price="$0"
+            icon={<span className="h-2 w-2 rounded-full bg-[var(--muted)]" />}
+            points={[`${formatCredits(FREE.signupCredits)} to start`, `${FREE.dailyMessages} messages a day`]}
+          />
+          <SummaryCard
+            label="Membership"
+            price={formatUsd(MEMBERSHIP.usdCents)}
+            unit={`/ ${MEMBERSHIP.memberDays} days`}
+            icon={<PremiumIcon className="h-4 w-4 text-[var(--premium)]" />}
+            points={["Unlimited messages", `${formatCredits(MEMBERSHIP.credits)} included`, "No auto-renew"]}
+            highlight
+          />
+          <SummaryCard
+            label="Credit packs"
+            price={`From ${formatUsd(BASE.usdCents)}`}
+            icon={<CoinIcon className="h-4 w-4 text-[var(--premium)]" />}
+            points={[
+              `${PRODUCTS[0].credits.toLocaleString("en-US")} to ${PRODUCTS[PRODUCTS.length - 1].credits.toLocaleString("en-US")} credits`,
+              "Never expire",
+            ]}
+          />
+        </div>
+
+        <Section accent="Free" title="account">
+          <Bullets
+            items={[
+              `${formatCredits(FREE.signupCredits)} when you sign up.`,
+              `${FREE.dailyMessages} messages a day, every day. The count resets at midnight UTC.`,
+            ]}
+          />
         </Section>
 
-        <Section title="Membership">
+        <Section accent="Membership" title="plan">
           <p>
-            <span className="text-[var(--ink)]">{formatUsd(MEMBERSHIP.usdCents)}</span> for {MEMBERSHIP.memberDays}{" "}
-            days, paid up front. It doesn&apos;t renew. Buy again any time to add another {MEMBERSHIP.memberDays} days
-            on top of what you have left.
+            <span className="font-semibold text-[var(--ink)]">{formatUsd(MEMBERSHIP.usdCents)}</span> for{" "}
+            {MEMBERSHIP.memberDays} days, paid up front. It doesn&apos;t renew. Buy again any time to add another{" "}
+            {MEMBERSHIP.memberDays} days on top of what you have left.
           </p>
-          <ul className="mt-3 list-disc space-y-1.5 pl-5">
-            {MEMBERSHIP.perks.map((perk) => (
-              <li key={perk}>{perk}</li>
-            ))}
-            <li>
-              &ldquo;Unlimited&rdquo; has a fair-use ceiling of {MEMBER_DAILY_MESSAGE_CAP} messages a day so one account
-              can&apos;t run the model around the clock.
-            </li>
-          </ul>
+          <div className="mt-4">
+            <Bullets
+              items={[
+                ...MEMBERSHIP.perks,
+                <>
+                  &ldquo;Unlimited&rdquo; has a fair-use ceiling of {MEMBER_DAILY_MESSAGE_CAP} messages a day so one
+                  account can&apos;t run the model around the clock.
+                </>,
+              ]}
+            />
+          </div>
         </Section>
 
-        <Section title="Credit packs">
+        <Section accent="Credit" title="packs">
           <p>Credits pay for photos, voice notes, video, and messages past your free ones.</p>
           <Table
             head={["Pack", "Price", "Credits", "Per 100 credits"]}
             rows={PRODUCTS.map((product) => [
-              <span key="name">
+              <span key="name" className="inline-flex flex-wrap items-center gap-2">
                 {product.name}
-                {product.tag ? <span className="ml-2 text-xs text-[var(--gold)]">{product.tag}</span> : null}
+                {product.tag ? (
+                  <span className="rounded-full bg-[var(--premium)]/15 px-2 py-0.5 text-[11px] font-bold text-[var(--premium)]">
+                    {product.tag}
+                  </span>
+                ) : null}
               </span>,
-              formatUsd(product.usdCents),
+              <span key="price" className="font-semibold text-[var(--ink)]">
+                {formatUsd(product.usdCents)}
+              </span>,
               product.credits.toLocaleString("en-US"),
-              formatUsd(Math.round((product.usdCents / product.credits) * 100)),
+              per100(product),
             ])}
           />
         </Section>
 
-        <Section title="What things cost">
+        <Section accent="What" title="things cost">
           <p>
             One credit costs about {Math.round(centsPerCredit * 10) / 10}¢ in the {BASE.name} pack, and less in bigger
             packs.
           </p>
           <Table
             head={["Action", "Credits", "About", ""]}
-            rows={ACTIONS.map((action) => [
+            rows={COST_ACTIONS.map((action) => [
               action.label,
-              COSTS[action.key].toLocaleString("en-US"),
+              <span key="credits" className="font-semibold text-[var(--ink)]">
+                {COSTS[action.key].toLocaleString("en-US")}
+              </span>,
               formatUsd(Math.round(COSTS[action.key] * centsPerCredit)),
               action.note ?? "",
             ])}
           />
-          <p className="mt-3">
+          <p className="mt-4">
             If a photo, voice note or video fails, or our safety checks block it, its credits come back automatically.
           </p>
         </Section>
 
-        <Section title="Paying">
-          <ul className="list-disc space-y-1.5 pl-5">
-            <li>USDC is charged one to one with the dollar price.</li>
-            <li>
-              SOL is priced at checkout from two independent price feeds and held for 15 minutes. If the feeds disagree,
-              we ask you to pay in USDC instead of guessing.
-            </li>
-            <li>Every payment is a Solana transaction, so your receipt lives on chain.</li>
-            <li>Purchases are capped at {formatUsd(100_000)} per account per day.</li>
-            <li>We screen paying wallets against sanctions lists, as the law requires.</li>
-          </ul>
+        <Section accent="Paying" title="in USDC or SOL">
+          <Bullets
+            items={[
+              "USDC is charged one to one with the dollar price.",
+              "SOL is priced at checkout from two independent price feeds and held for 15 minutes. If the feeds disagree, we ask you to pay in USDC instead of guessing.",
+              "Every payment is a Solana transaction, so your receipt lives on chain.",
+              `Purchases are capped at ${formatUsd(100_000)} per account per day.`,
+              "We screen paying wallets against sanctions lists, as the law requires.",
+            ]}
+          />
         </Section>
 
-        <Section title="Refunds">
+        <Section accent="Refund" title="policy">
           <p>
             Haven&apos;t used what you bought? Ask within 14 days of buying it. By default we refund as store credit. If
             you&apos;d rather, we send USDC back to the wallet address that paid, minus the network fee.
@@ -160,37 +290,34 @@ export default function PricingPage() {
           <p className="mt-3">
             Credits have no cash value and can&apos;t be withdrawn, transferred or sold. To ask for a refund,{" "}
             {SUPPORT_EMAIL ? (
-              <a href={`mailto:${SUPPORT_EMAIL}`} className="text-[var(--gold)] underline underline-offset-2">
+              <a href={`mailto:${SUPPORT_EMAIL}`} className={LINK}>
                 email {SUPPORT_EMAIL}
               </a>
             ) : (
               "contact support"
             )}{" "}
             with your order number. You&apos;ll find it on the{" "}
-            <Link href="/premium" className="text-[var(--gold)] underline underline-offset-2">
+            <Link href="/premium" className={LINK}>
               Premium page
             </Link>{" "}
             under Recent payments. The full rules are in our{" "}
-            <Link href="/terms" className="text-[var(--gold)] underline underline-offset-2">
+            <Link href="/terms" className={LINK}>
               terms
             </Link>
             .
           </p>
         </Section>
 
-        <div className="mt-12 flex flex-col gap-3 sm:flex-row">
-          <Link
-            href="/premium"
-            className="rounded-full bg-[var(--gold)] px-6 py-3 text-center text-sm font-medium !text-[#12110F]"
-          >
-            Get membership
-          </Link>
-          <Link
-            href="/packs"
-            className="rounded-full border border-white/20 px-6 py-3 text-center text-sm text-[var(--ink)] hover:border-[var(--ink)]"
-          >
-            Buy credits
-          </Link>
+        <div className="mt-12 flex flex-col gap-3 rounded-2xl bg-[var(--surface)] p-5 ring-1 ring-white/5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+          <p className="text-base font-semibold text-[var(--ink)]">Ready when you are.</p>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <ButtonLink href="/premium" size="lg">
+              Get membership
+            </ButtonLink>
+            <ButtonLink href="/packs" variant="secondary" size="lg">
+              Buy credits
+            </ButtonLink>
+          </div>
         </div>
       </article>
     </AppShell>

@@ -3,19 +3,28 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { AppHeader, AppShell } from "@/components/app-shell";
+import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
+import { ACCOUNT_PAGE, Notice, SectionCard, SignInPrompt, solidDangerClass } from "@/components/account/account-ui";
+import { PencilIcon, PinIcon, TrashIcon } from "@/components/account/account-icons";
+import { BrainIcon, ChevronLeftIcon } from "@/components/icons";
+import { Button, Panel, buttonClass, cx, inputClass } from "@/components/ui";
 import { ApiError, useApi } from "@/lib/api";
 import type { CharacterDTO, MemoryDTO } from "@/lib/api-types";
 
 const MAX_LENGTH = 280;
+// Matches PINNED_CAP in server/memory.ts: the server refuses a pin past this.
+const PIN_LIMIT = 40;
 
 const KIND: Record<MemoryDTO["kind"], { label: string; className: string }> = {
-  fact: { label: "Fact", className: "border-white/15 text-[var(--muted)]" },
-  preference: { label: "Preference", className: "border-[var(--gold)]/40 text-[var(--gold)]" },
-  event: { label: "Event", className: "border-sky-300/30 text-sky-200" },
-  boundary: { label: "Boundary", className: "border-rose-300/40 text-rose-200" },
+  fact: { label: "Fact", className: "bg-white/[0.07] text-[var(--muted)]" },
+  preference: { label: "Preference", className: "bg-[var(--accent-soft)] text-[var(--accent)]" },
+  event: { label: "Event", className: "bg-sky-400/10 text-sky-200" },
+  boundary: { label: "Boundary", className: "bg-red-500/15 text-red-200 ring-1 ring-red-400/30" },
 };
+
+const itemAction =
+  "inline-flex h-10 items-center gap-1.5 rounded-full px-3 text-xs font-semibold text-[var(--muted)] transition-colors hover:bg-white/5 hover:text-[var(--ink)] disabled:opacity-60";
 
 function messageOf(error: unknown, fallback: string) {
   return error instanceof ApiError ? error.message : fallback;
@@ -52,15 +61,25 @@ function MemoryItem({
   }
 
   return (
-    <li className="py-4">
+    <li
+      className={cx(
+        "flex flex-col rounded-2xl border bg-[var(--surface)] p-4 sm:p-5",
+        memory.pinned ? "border-[var(--accent)]/40" : "border-[var(--line)]",
+      )}
+    >
       <div className="flex items-center gap-2">
-        <span className={`rounded-full border px-2 py-0.5 text-[11px] ${kind.className}`}>{kind.label}</span>
-        {memory.pinned ? <span className="text-[11px] text-[var(--gold)]">Pinned</span> : null}
+        <span className={cx("rounded-full px-2.5 py-0.5 text-[11px] font-semibold", kind.className)}>{kind.label}</span>
+        {memory.pinned ? (
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--accent)]">
+            <PinIcon className="h-3.5 w-3.5" />
+            Pinned
+          </span>
+        ) : null}
       </div>
 
       {editing ? (
         <form
-          className="mt-2"
+          className="mt-3"
           onSubmit={(event) => {
             event.preventDefault();
             const next = text.trim();
@@ -78,40 +97,35 @@ function MemoryItem({
           <textarea
             value={text}
             onChange={(event) => setText(event.target.value.slice(0, MAX_LENGTH))}
-            rows={2}
+            rows={3}
             maxLength={MAX_LENGTH}
             autoFocus
             aria-label="Edit memory"
-            className="w-full resize-none rounded-xl border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm leading-6 outline-none focus:border-[var(--gold)]/60"
+            className={cx(inputClass, "resize-none py-3 leading-6")}
           />
-          <div className="mt-2 flex items-center gap-3 text-xs">
-            <button
-              type="submit"
-              disabled={busy}
-              className="rounded-full bg-[var(--gold)] px-4 py-1.5 font-medium !text-[#12110F] disabled:opacity-60"
-            >
+          <div className="mt-3 flex items-center gap-2">
+            <button type="submit" disabled={busy} className={buttonClass("primary", "md")}>
               {busy ? "Saving…" : "Save"}
             </button>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               onClick={() => {
                 setEditing(false);
                 setText(memory.content);
                 setError(null);
               }}
-              className="text-[var(--muted)] hover:text-[var(--ink)]"
             >
               Cancel
-            </button>
-            <span className="ml-auto text-[var(--muted)]">
+            </Button>
+            <span className="ml-auto text-xs text-[var(--muted)]">
               {text.length}/{MAX_LENGTH}
             </span>
           </div>
         </form>
       ) : (
         <>
-          <p className="mt-2 text-sm leading-6 text-[var(--ink)]">{memory.content}</p>
-          <div className="mt-2 flex items-center gap-4 text-xs text-[var(--muted)]">
+          <p className="mt-3 flex-1 break-words text-[15px] leading-6 text-[var(--ink)]">{memory.content}</p>
+          <div className="-mx-2 -mb-1 mt-3 flex items-center gap-1 border-t border-[var(--line)] pt-2">
             <button
               type="button"
               disabled={busy}
@@ -119,21 +133,34 @@ function MemoryItem({
                 setText(memory.content);
                 setEditing(true);
               }}
-              className="hover:text-[var(--ink)] disabled:opacity-60"
+              className={itemAction}
             >
+              <PencilIcon className="h-4 w-4" />
               Edit
             </button>
-            <button type="button" disabled={busy} onClick={() => void run(onTogglePin)} className="hover:text-[var(--ink)] disabled:opacity-60">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void run(onTogglePin)}
+              className={itemAction}
+            >
+              <PinIcon className="h-4 w-4" />
               {memory.pinned ? "Unpin" : "Pin"}
             </button>
-            <button type="button" disabled={busy} onClick={() => void run(onDelete)} className="hover:text-rose-200 disabled:opacity-60">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void run(onDelete)}
+              className={cx(itemAction, "ml-auto hover:bg-red-500/10 hover:text-red-300")}
+            >
+              <TrashIcon className="h-4 w-4" />
               Delete
             </button>
           </div>
         </>
       )}
       {error ? (
-        <p role="alert" className="mt-2 text-xs text-rose-200">
+        <p role="alert" className="mt-2 text-xs text-red-300">
           {error}
         </p>
       ) : null}
@@ -252,66 +279,64 @@ export default function MemoriesPage() {
   let body: ReactNode;
   if (!ready || (loadKey && !loaded)) {
     body = (
-      <div className="mt-8 space-y-4" aria-label="Loading memories">
-        {[0, 1, 2].map((row) => (
-          <div key={row} className="space-y-2">
-            <div className="h-4 w-20 animate-pulse rounded-full bg-[var(--bg-2)]" />
-            <div className="h-4 w-3/4 animate-pulse rounded bg-[var(--bg-2)]" />
-          </div>
+      <ul className="grid gap-3 sm:grid-cols-2" aria-label="Loading memories">
+        {[0, 1, 2, 3].map((row) => (
+          <li key={row} className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
+            <div className="h-5 w-20 animate-pulse rounded-full bg-white/[0.06]" />
+            <div className="mt-4 h-4 w-full animate-pulse rounded-full bg-white/[0.06]" />
+            <div className="mt-2 h-4 w-2/3 animate-pulse rounded-full bg-white/[0.06]" />
+          </li>
         ))}
-      </div>
+      </ul>
     );
   } else if (!session) {
     body = (
-      <div className="mt-8 rounded-2xl border border-[var(--line)] bg-[var(--bg-2)] p-6">
-        <p className="text-sm leading-6 text-[var(--muted)]">Log in to see and edit what characters remember about you.</p>
-        <button
-          type="button"
-          onClick={openLogin}
-          className="mt-4 rounded-full bg-[var(--gold)] px-5 py-2 text-sm font-medium !text-[#12110F]"
-        >
-          Log in
-        </button>
-      </div>
+      <SignInPrompt
+        title="Log in to see memories"
+        body="Log in to see and edit what characters remember about you."
+        onLogin={openLogin}
+      />
     );
   } else if (!loaded?.memories) {
     body = (
-      <div className="mt-8 rounded-2xl border border-[var(--line)] bg-[var(--bg-2)] p-6">
+      <Panel className="flex flex-col items-start gap-4 p-6">
         <p className="text-sm text-[var(--ink)]">{loaded?.error ?? "Couldn't load memories."}</p>
-        <button
-          type="button"
+        <Button
+          size="lg"
           onClick={() => {
             setState(null);
             setRetry((count) => count + 1);
           }}
-          className="mt-4 rounded-full bg-[var(--gold)] px-5 py-2 text-sm font-medium !text-[#12110F]"
         >
           Try again
-        </button>
-      </div>
+        </Button>
+      </Panel>
     );
   } else if (loaded.memories.length === 0) {
     body = (
-      <div className="mt-8 rounded-2xl border border-[var(--line)] bg-[var(--bg-2)] p-6">
-        <p className="text-sm leading-6 text-[var(--muted)]">
+      <Panel className="flex flex-col items-center px-6 py-12 text-center">
+        <span
+          aria-hidden
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]"
+        >
+          <BrainIcon className="h-7 w-7" />
+        </span>
+        <p className="mt-4 max-w-md text-sm leading-6 text-[var(--muted)]">
           {Name} hasn&apos;t saved anything about you yet. As you talk, the things that matter show up here, and you can edit
           or delete any of them.
         </p>
         {person ? (
-          <Link
-            href={`/date/${person.id}`}
-            className="mt-4 inline-block rounded-full bg-[var(--gold)] px-5 py-2 text-sm font-medium !text-[#12110F]"
-          >
+          <Link href={`/date/${person.id}`} className={buttonClass("primary", "lg", "mt-6")}>
             Talk to {name}
           </Link>
         ) : null}
-      </div>
+      </Panel>
     );
   } else {
     const count = loaded.memories.length;
     body = (
       <>
-        <ul className="mt-6 divide-y divide-[var(--line)] border-y border-[var(--line)]">
+        <ul className="grid gap-3 sm:grid-cols-2">
           {loaded.memories.map((memory) => (
             <MemoryItem
               key={`${memory.id}:${memory.updatedAt}`}
@@ -323,90 +348,123 @@ export default function MemoriesPage() {
           ))}
         </ul>
 
-        <div className="mt-8 rounded-2xl border border-[var(--line)] bg-[var(--bg-2)] p-5">
-          {confirming ? (
-            <>
-              <p className="text-sm font-medium text-[var(--ink)]">Forget everything {name} knows about you?</p>
-              <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                This deletes all {count} {count === 1 ? "memory" : "memories"} and the summary of your older chats. Your chat
-                history stays, and {name} still sees your most recent messages. This can&apos;t be undone.
-              </p>
-              <div className="mt-4 flex gap-3">
-                <button
-                  type="button"
-                  onClick={forgetEverything}
-                  disabled={forgetting}
-                  className="rounded-full bg-rose-300 px-5 py-2 text-sm font-medium text-[#12110F] disabled:opacity-60"
-                >
-                  {forgetting ? "Forgetting…" : "Forget everything"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirming(false)}
-                  disabled={forgetting}
-                  className="rounded-full border border-[var(--line)] px-5 py-2 text-sm"
-                >
-                  Cancel
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-[var(--muted)]">Want a clean slate?</p>
-              <button
-                type="button"
+        <SectionCard
+          tone="danger"
+          className="mt-8"
+          icon={<TrashIcon />}
+          title={confirming ? `Forget everything ${name} knows about you?` : "Forget everything"}
+          description={
+            confirming ? (
+              <>
+                This deletes all {count} {count === 1 ? "memory" : "memories"} and the summary of your older chats. Your
+                chat history stays, and {name} still sees your most recent messages. This can&apos;t be undone.
+              </>
+            ) : (
+              "Want a clean slate?"
+            )
+          }
+          action={
+            confirming ? null : (
+              <Button
+                variant="danger"
                 onClick={() => {
                   setNotice(null);
                   setConfirming(true);
                 }}
-                className="rounded-full border border-rose-300/40 px-4 py-2 text-sm text-rose-200 hover:bg-rose-300/10"
               >
                 Forget everything
+              </Button>
+            )
+          }
+        >
+          {confirming ? (
+            <div className="flex flex-wrap gap-3">
+              <button type="button" onClick={forgetEverything} disabled={forgetting} className={solidDangerClass("md")}>
+                {forgetting ? "Forgetting…" : "Forget everything"}
               </button>
+              <Button variant="secondary" onClick={() => setConfirming(false)} disabled={forgetting}>
+                Cancel
+              </Button>
             </div>
-          )}
-        </div>
+          ) : null}
+        </SectionCard>
       </>
     );
   }
 
+  const memories = loaded?.memories ?? null;
+  const pinnedCount = memories ? memories.filter((memory) => memory.pinned).length : 0;
+
   return (
     <AppShell>
-      <AppHeader />
-      <section className="mx-auto w-full max-w-xl px-4 pb-10 pt-6">
-        {person ? (
-          <Link href={`/date/${person.id}`} className="text-xs text-[var(--muted)] hover:text-[var(--ink)]">
-            ← Back to {person.name}
-          </Link>
-        ) : (
-          <Link href="/chat" className="text-xs text-[var(--muted)] hover:text-[var(--ink)]">
-            ← Back to chats
-          </Link>
-        )}
-        <div className="mt-4 flex items-center gap-4">
-          {person ? (
-            <span
-              className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full border border-white/10"
-              style={{ background: person.color }}
-            >
-              {person.image ? <img src={person.image} alt="" className="h-full w-full object-cover" /> : null}
-            </span>
+      <div className={ACCOUNT_PAGE}>
+        <Link
+          href={person ? `/date/${person.id}` : "/chat"}
+          className="-ml-2 inline-flex h-10 items-center gap-1 rounded-full pl-1 pr-3 text-sm font-semibold !text-[var(--muted)] hover:bg-white/5 hover:!text-[var(--ink)]"
+        >
+          <ChevronLeftIcon className="h-5 w-5" />
+          {person ? `Back to ${person.name}` : "Back to chats"}
+        </Link>
+
+        <Panel className="relative mt-3 overflow-hidden">
+          {person?.image ? (
+            <img
+              src={person.image}
+              alt=""
+              className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-25 blur-2xl"
+            />
           ) : null}
-          <div className="min-w-0">
-            <h1 className="font-[family-name:var(--font-display)] text-3xl text-[var(--ink)]">What {name} remembers</h1>
+          <div className="absolute inset-0 bg-gradient-to-r from-[var(--surface)] via-[var(--surface)]/85 to-[var(--surface)]/60" />
+          <div className="relative grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-3 p-5 sm:items-start sm:gap-x-6 sm:p-6">
+            {person ? (
+              <span
+                className="relative aspect-[3/4] w-16 shrink-0 overflow-hidden rounded-xl ring-1 ring-white/10 sm:row-span-3 sm:w-28"
+                style={{ background: person.color }}
+              >
+                {person.image ? <img src={person.image} alt="" className="h-full w-full object-cover" /> : null}
+              </span>
+            ) : (
+              <span
+                aria-hidden
+                className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent)] sm:row-span-3"
+              >
+                <BrainIcon className="h-7 w-7" />
+              </span>
+            )}
+            <div className="min-w-0">
+              <p className="text-xs font-bold uppercase tracking-wide text-[var(--accent)]">Memories</p>
+              <h1 className="mt-1 text-2xl font-bold tracking-tight text-[var(--ink)] sm:text-3xl">What {name} remembers</h1>
+            </div>
+            <p className="col-span-2 max-w-2xl text-sm leading-6 text-[var(--muted)] sm:col-span-1">
+              This is what {name} remembers about you. Edit or delete anything. Pinned memories and boundaries are always on{" "}
+              {person ? `${name}'s` : "their"} mind; the rest come up when they&apos;re relevant.
+            </p>
+            {memories && memories.length ? (
+              <div className="col-span-2 flex flex-wrap gap-2 text-xs font-semibold sm:col-span-1">
+                <span className="rounded-full bg-white/[0.07] px-3 py-1.5 text-[var(--ink)]">
+                  {memories.length} {memories.length === 1 ? "memory" : "memories"}
+                </span>
+                <span
+                  className={cx(
+                    "inline-flex items-center gap-1 rounded-full px-3 py-1.5",
+                    pinnedCount >= PIN_LIMIT ? "bg-red-500/15 text-red-200" : "bg-[var(--accent-soft)] text-[var(--accent)]",
+                  )}
+                >
+                  <PinIcon className="h-3.5 w-3.5" />
+                  {pinnedCount} of {PIN_LIMIT} pinned
+                </span>
+              </div>
+            ) : null}
           </div>
-        </div>
-        <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-          This is what {name} remembers about you. Edit or delete anything. Pinned memories and boundaries are always on{" "}
-          {person ? `${name}'s` : "their"} mind; the rest come up when they&apos;re relevant.
-        </p>
+        </Panel>
+
         {notice ? (
-          <p role="status" className="mt-4 rounded-xl border border-[var(--line)] px-3 py-2 text-sm text-[var(--ink)]">
+          <Notice tone="info" role="status" className="mt-4">
             {notice}
-          </p>
+          </Notice>
         ) : null}
-        {body}
-      </section>
+        <div className="mt-6">{body}</div>
+      </div>
     </AppShell>
   );
 }

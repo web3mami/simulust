@@ -3,8 +3,17 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AppHeader, AppShell } from "@/components/app-shell";
+import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
+import { Avatar } from "@/components/chat/avatar";
+import { ChatHeader } from "@/components/chat/chat-header";
+import { Composer } from "@/components/chat/composer";
+import { ConversationList } from "@/components/chat/conversation-list";
+import { EXPLORE_HREF } from "@/components/chat/format";
+import { MessageBubble, NoticeLine, StreamingBubble, type Extra } from "@/components/chat/message-bubble";
+import { CrisisCard, Lightbox, ProblemLine, type Problem } from "@/components/chat/message-parts";
+import { ProfilePanel } from "@/components/chat/profile-panel";
+import { Button, ButtonLink, cx } from "@/components/ui";
 import { ApiError, useApi, useAuthHeaders } from "@/lib/api";
 import type {
   ApiErrorBody,
@@ -19,9 +28,6 @@ import type {
 import { COSTS } from "@/lib/pricing";
 
 type ThreadPage = { thread: ThreadDTO; messages: MessageDTO[]; hasMore?: boolean };
-type Problem = { text: string; code?: string };
-// Voice notes and videos made from a message, loaded with history or made during this visit.
-type Extra = { voice?: MediaDTO; video?: MediaDTO; busy?: "voice" | "video"; error?: string };
 
 function extrasFrom(list: MessageDTO[]): Record<string, Extra> {
   const out: Record<string, Extra> = {};
@@ -38,6 +44,8 @@ const POLL_MS = 3000;
 // Give up polling a job after this long; the media stays in the user's history.
 const POLL_GIVE_UP_MS = 15 * 60 * 1000;
 const MAX_LENGTH = 4000;
+// From this width the profile sits beside the conversation; below it, it slides over.
+const DOCK_MIN = 1180;
 
 function problemOf(error: unknown, fallback = "Something went wrong. Try again."): Problem {
   if (error instanceof ApiError) return { text: error.message, code: error.code };
@@ -74,133 +82,29 @@ async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenerator<Cha
   }
 }
 
-// *actions* in asterisks render as italics, the way roleplay chats write them.
-function Rich({ text }: { text: string }) {
-  const parts = text.split(/(\*[^*\n]+\*)/g);
+// A centred message in the conversation column, for missing characters and errors.
+function CenterNote({ title, body, children }: { title: string; body: ReactNode; children?: ReactNode }) {
   return (
-    <>
-      {parts.map((part, index) =>
-        part.length > 2 && part.startsWith("*") && part.endsWith("*") ? (
-          <em key={index} className="opacity-80">
-            {part.slice(1, -1)}
-          </em>
-        ) : (
-          <span key={index}>{part}</span>
-        ),
-      )}
-    </>
-  );
-}
-
-function ProblemLine({ problem, onDismiss }: { problem: Problem; onDismiss: () => void }) {
-  let action: ReactNode = null;
-  if (problem.code === "insufficient_credits") {
-    action = (
-      <Link href="/premium" className="shrink-0 rounded-full bg-[var(--gold)] px-3 py-1 text-xs font-medium !text-[#12110F]">
-        Get credits
-      </Link>
-    );
-  } else if (problem.code === "age_verification_required") {
-    action = (
-      <Link href="/verify" className="shrink-0 rounded-full bg-[var(--gold)] px-3 py-1 text-xs font-medium !text-[#12110F]">
-        Verify your age
-      </Link>
-    );
-  }
-  return (
-    <div role="alert" className="flex items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm">
-      <p className="min-w-0 flex-1 text-[var(--ink)]">{problem.text}</p>
-      {action}
-      <button type="button" onClick={onDismiss} className="shrink-0 text-xs text-[var(--muted)] hover:text-[var(--ink)]">
-        Dismiss
-      </button>
+    <div className="m-auto flex max-w-md flex-col items-center px-6 py-16 text-center">
+      <h1 className="text-2xl font-bold tracking-tight text-[var(--ink)] sm:text-3xl">{title}</h1>
+      <p className="mt-3 text-sm leading-6 text-[var(--muted)]">{body}</p>
+      {children ? <div className="mt-6 flex flex-wrap justify-center gap-3">{children}</div> : null}
     </div>
   );
 }
 
-function CrisisCard({ resources, onClose }: { resources: CrisisResource[]; onClose: () => void }) {
+function ConversationSkeleton() {
   return (
-    <div role="region" aria-label="Crisis support" className="rounded-2xl border border-[var(--gold)]/50 bg-[var(--bg)] p-4 text-sm">
-      <div className="flex items-start justify-between gap-3">
-        <p className="font-medium text-[var(--ink)]">
-          If you&apos;re thinking about hurting yourself, you can talk to a real person right now. It&apos;s free and
-          confidential.
-        </p>
-        <button type="button" onClick={onClose} className="shrink-0 text-xs text-[var(--muted)] hover:text-[var(--ink)]">
-          Close
-        </button>
+    <div className="flex min-w-0 flex-1 flex-col" aria-label="Loading chat">
+      <div className="flex h-16 shrink-0 items-center gap-3 border-b border-[var(--line)] bg-[var(--bg-2)] px-4">
+        <span className="h-10 w-10 animate-pulse rounded-full bg-[var(--surface)]" />
+        <span className="h-3 w-28 animate-pulse rounded bg-[var(--surface)]" />
       </div>
-      <ul className="mt-3 space-y-2">
-        {resources.map((resource) => (
-          <li key={resource.label}>
-            <span className="text-[var(--gold)]">{resource.label}:</span>{" "}
-            {resource.href ? (
-              <a href={resource.href} className="underline underline-offset-2" target={resource.href.startsWith("http") ? "_blank" : undefined} rel="noreferrer">
-                {resource.detail}
-              </a>
-            ) : (
-              resource.detail
-            )}
-          </li>
-        ))}
-      </ul>
-      <p className="mt-3 text-xs text-[var(--muted)]">If you&apos;re in immediate danger, call your local emergency number.</p>
-    </div>
-  );
-}
-
-function MediaView({ media, name, stalled }: { media: MediaDTO; name: string; stalled?: boolean }) {
-  if (media.status === "pending") {
-    const label = stalled
-      ? "Still working on it. Reload the page later to check."
-      : media.kind === "video"
-        ? "Making the video…"
-        : media.kind === "audio"
-          ? "Recording…"
-          : "Taking the photo…";
-    return (
-      <div
-        className={`flex max-w-full items-center justify-center rounded-xl border border-dashed border-[var(--line)] px-4 text-center text-xs text-[var(--muted)] ${
-          media.kind === "audio" ? "h-12 w-64" : "h-40 w-56"
-        }`}
-      >
-        <span className={stalled ? "" : "animate-pulse"}>{label}</span>
-      </div>
-    );
-  }
-  if (media.status !== "ready" || !media.url) {
-    return (
-      <p className="rounded-xl border border-[var(--line)] px-3 py-2 text-xs text-[var(--muted)]">
-        {media.error ?? "This couldn't be created."} Any credits for it were returned.
-      </p>
-    );
-  }
-  if (media.kind === "image") {
-    return <img src={media.url} alt={`Photo from ${name}`} className="max-h-96 w-auto max-w-full rounded-xl" />;
-  }
-  if (media.kind === "video") {
-    return <video controls playsInline src={media.url} className="max-h-96 w-auto max-w-full rounded-xl" />;
-  }
-  return <audio controls src={media.url} className="w-64 max-w-full" />;
-}
-
-function CharacterCard({ person, children }: { person: CharacterDTO; children?: ReactNode }) {
-  return (
-    <div className="overflow-hidden rounded-2xl border border-[var(--line)]" style={{ background: person.color }}>
-      {person.image ? <img src={person.image} alt="" className="aspect-[3/4] w-full object-cover" /> : null}
-      <div className="p-5">
-        <p className="text-xs uppercase text-[var(--accent-2)]">{person.role}</p>
-        <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl">
-          {person.name}, {person.age}
-        </h1>
-        <p className="mt-2 text-sm">
-          {person.gender} · {person.ethnicity} · {person.body}
-        </p>
-        <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[var(--accent-2)]">
-          {person.lane === "anime" ? "Anime" : "Realistic"} · {person.heat}
-        </p>
-        <p className="mt-4 text-sm leading-6">{person.line}</p>
-        {children}
+      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-end gap-3 px-4 py-6 sm:px-6">
+        <div className="h-12 w-2/3 animate-pulse rounded-2xl bg-[var(--surface)]" />
+        <div className="ml-auto h-10 w-1/2 animate-pulse rounded-2xl bg-[var(--surface)]" />
+        <div className="h-20 w-3/4 animate-pulse rounded-2xl bg-[var(--surface)]" />
+        <div className="mt-4 h-14 w-full animate-pulse rounded-3xl bg-[var(--surface)]" />
       </div>
     </div>
   );
@@ -297,6 +201,38 @@ export default function DatePage() {
 
   const shownCredits = credits && credits.me === me ? credits : me ? { balance: me.balance, free: me.freeMessagesLeft } : null;
 
+  // Layout: the chat list refreshes after each reply so its previews stay
+  // current; the profile docks beside the chat on wide screens and slides over
+  // it on narrow ones; photos open full screen.
+  const [listVersion, setListVersion] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [wide, setWide] = useState(false);
+  const [profileHidden, setProfileHidden] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [lightbox, setLightbox] = useState<MediaDTO | null>(null);
+  const closeLightbox = useCallback(() => setLightbox(null), []);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => setWide(entry.contentRect.width >= DOCK_MIN));
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, []);
+
+  const sheetShown = sheetOpen && !wide;
+  useEffect(() => {
+    if (!sheetShown) return;
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && setSheetOpen(false);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [sheetShown]);
+
+  function toggleProfile() {
+    if ((rootRef.current?.clientWidth ?? 0) >= DOCK_MIN) setProfileHidden((value) => !value);
+    else setSheetOpen((value) => !value);
+  }
+
   // Scrolling: stay pinned to the bottom unless the user scrolled up, and keep
   // the reading position when older messages are prepended.
   const listRef = useRef<HTMLDivElement>(null);
@@ -328,6 +264,20 @@ export default function DatePage() {
     if (!list) return;
     stickRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 120;
   }
+
+  // Photos and videos load after the messages render; stay pinned while they grow.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const conversationShown = Boolean(ready && session && person);
+  useEffect(() => {
+    const list = listRef.current;
+    const content = contentRef.current;
+    if (!conversationShown || !list || !content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (stickRef.current && !anchorRef.current) list.scrollTop = list.scrollHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [conversationShown]);
 
   const setExtra = useCallback((messageId: string, patch: Partial<Extra>) => {
     setExtras((current) => ({ ...current, [messageId]: { ...current[messageId], ...patch } }));
@@ -458,6 +408,7 @@ export default function DatePage() {
           setStreamText(null);
           setMessages((current) => [...current, event.message]);
           setCredits({ balance: event.balance, free: event.freeMessagesLeft, me });
+          setListVersion((count) => count + 1);
           void refreshMe();
         } else if (event.type === "error") {
           finished = true;
@@ -527,6 +478,7 @@ export default function DatePage() {
       if (typeof result.balance === "number") {
         setCredits({ balance: result.balance, free: shownCredits?.free ?? 0, me });
       }
+      setListVersion((count) => count + 1);
       void refreshMe();
     } catch (error) {
       setProblem(problemOf(error, "Couldn't get a photo right now. Try again."));
@@ -569,164 +521,161 @@ export default function DatePage() {
   // ---------------------------------------------------------------------------
   // Render
 
+  // The chat list on the left (desktop) for anyone who may be signed in.
+  const showList = !ready || Boolean(session);
+  const list = showList ? (
+    <aside
+      aria-label="Your chats"
+      className="hidden w-[300px] shrink-0 border-r border-[var(--line)] bg-[var(--bg-2)] lg:block 2xl:w-[320px]"
+    >
+      <ConversationList activeId={person?.id ?? characterId} current={person} refreshKey={listVersion} />
+    </aside>
+  ) : null;
+
+  let center: ReactNode;
+  let profile: ReactNode = null;
+  let overlays: ReactNode = null;
+
   if (!ready || !characterLoaded) {
-    return (
-      <AppShell>
-        <AppHeader />
-        <section className="mx-auto grid max-w-5xl gap-6 px-4 pb-6 pt-4 sm:px-6 lg:grid-cols-[280px_1fr]">
-          <div className="hidden aspect-[3/4] animate-pulse rounded-2xl bg-[var(--bg-2)] lg:block" />
-          <div className="h-[60vh] animate-pulse rounded-2xl bg-[var(--bg-2)]" />
-        </section>
-      </AppShell>
-    );
-  }
-
-  if (!person) {
+    center = <ConversationSkeleton />;
+  } else if (!person) {
     const failed = characterState?.problem;
-    return (
-      <AppShell>
-        <AppHeader />
-        <section className="mx-auto max-w-xl px-6 pt-16">
-          <h1 className="font-[family-name:var(--font-display)] text-3xl">
-            {failed ? "We couldn't load this chat." : "That character is gone."}
-          </h1>
-          <p className="mt-3 text-sm text-[var(--muted)]">
-            {failed ? failed.text : "They may have been deleted. Find someone new on Discover."}
-          </p>
-          <div className="mt-6 flex gap-3">
-            {failed ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setCharacterState(null);
-                  setCharacterRetry((count) => count + 1);
-                }}
-                className="rounded-full bg-[var(--gold)] px-5 py-2 text-sm font-medium !text-[#12110F]"
-              >
-                Try again
-              </button>
+    center = (
+      <section className="flex min-w-0 flex-1 overflow-y-auto">
+        <CenterNote
+          title={failed ? "We couldn't load this chat." : "That character is gone."}
+          body={failed ? failed.text : "They may have been deleted. Find someone new on Discover."}
+        >
+          {failed ? (
+            <Button
+              size="lg"
+              onClick={() => {
+                setCharacterState(null);
+                setCharacterRetry((count) => count + 1);
+              }}
+            >
+              Try again
+            </Button>
+          ) : null}
+          <ButtonLink href={EXPLORE_HREF} size="lg" variant={failed ? "secondary" : "primary"}>
+            Explore characters
+          </ButtonLink>
+        </CenterNote>
+      </section>
+    );
+  } else if (!session) {
+    center = (
+      <section className="flex min-w-0 flex-1 overflow-y-auto px-4 py-6">
+        <div className="m-auto w-full max-w-sm">
+          <div
+            className="relative aspect-[3/4] overflow-hidden rounded-3xl ring-1 ring-white/10"
+            style={{ background: person.color }}
+          >
+            {person.image ? (
+              <img src={person.image} alt={`Portrait of ${person.name}`} className="absolute inset-0 h-full w-full object-cover" />
             ) : null}
-            <Link href="/#explore" className="rounded-full border border-[var(--line)] px-5 py-2 text-sm">
-              Back to Discover
-            </Link>
+            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent px-5 pb-5 pt-24">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--accent-2)]">{person.role}</p>
+              <h1 className="mt-1 text-3xl font-bold tracking-tight text-white">
+                {person.name}, {person.age}
+              </h1>
+              <p className="mt-2 text-sm leading-6 text-white/85">{person.line}</p>
+              <Button size="lg" className="mt-5 w-full" onClick={openLogin}>
+                Log in to start talking
+              </Button>
+              <p className="mt-3 text-center text-xs text-white/70">18+ only. {person.name} remembers you between chats.</p>
+            </div>
           </div>
-        </section>
-      </AppShell>
+        </div>
+      </section>
     );
-  }
+  } else {
+    const name = person.name;
+    const canVoice = Boolean(features?.voice && me?.ageVerified);
+    const canAnimate = Boolean(features?.video && me?.ageVerified);
+    const canPhoto = Boolean(me?.ageVerified);
+    const profileOpen = wide ? !profileHidden : sheetOpen;
 
-  if (!session) {
-    return (
-      <AppShell>
-        <AppHeader />
-        <section className="mx-auto max-w-sm px-4 pb-10 pt-6">
-          <CharacterCard person={person}>
-            <button
-              type="button"
-              onClick={openLogin}
-              className="mt-6 w-full rounded-full bg-[var(--gold)] px-5 py-3 text-sm font-medium !text-[#12110F]"
-            >
-              Log in to start talking
-            </button>
-            <p className="mt-3 text-center text-xs text-white/70">
-              18+ only. {person.name} remembers you between chats.
-            </p>
-          </CharacterCard>
-        </section>
-      </AppShell>
-    );
-  }
+    const creditLine = me?.isMember
+      ? "Member · unlimited messages"
+      : shownCredits
+        ? shownCredits.free > 0
+          ? `${shownCredits.free} free ${shownCredits.free === 1 ? "message" : "messages"} left today · ${shownCredits.balance.toLocaleString("en-US")} credits`
+          : `${shownCredits.balance.toLocaleString("en-US")} credits · ${COSTS.message} per message`
+        : null;
+    const creditShort = me?.isMember
+      ? "Unlimited"
+      : shownCredits
+        ? shownCredits.free > 0
+          ? `${shownCredits.free} free left today`
+          : `${shownCredits.balance.toLocaleString("en-US")} credits`
+        : "";
 
-  const name = person.name;
-  const canVoice = Boolean(features?.voice && me?.ageVerified);
-  const canAnimate = Boolean(features?.video && me?.ageVerified);
-  const canPhoto = Boolean(me?.ageVerified);
+    let banner: ReactNode = null;
+    if (me && !me.ageVerified) {
+      banner = (
+        <>
+          Explicit chat and photos unlock after age verification.{" "}
+          <Link href="/verify" className="font-semibold text-[var(--accent)] underline-offset-2 hover:underline">
+            Verify your age
+          </Link>
+        </>
+      );
+    } else if (me && me.ageVerified && !me.settings.explicit) {
+      banner = (
+        <>
+          Explicit chat is off.{" "}
+          <Link href="/settings" className="font-semibold text-[var(--accent)] underline-offset-2 hover:underline">
+            Turn it on in Settings
+          </Link>
+        </>
+      );
+    }
 
-  const creditLine = me?.isMember
-    ? "Member · unlimited messages"
-    : shownCredits
-      ? shownCredits.free > 0
-        ? `${shownCredits.free} free ${shownCredits.free === 1 ? "message" : "messages"} left today · ${shownCredits.balance.toLocaleString("en-US")} credits`
-        : `${shownCredits.balance.toLocaleString("en-US")} credits · ${COSTS.message} per message`
-      : null;
+    // Which character messages start a new run and so show the avatar.
+    const avatarIds = new Set<string>();
+    let previous: MessageDTO["role"] | null = null;
+    for (const message of messages) {
+      if (message.role === "assistant" && previous !== "assistant") avatarIds.add(message.id);
+      previous = message.role;
+    }
 
-  let banner: ReactNode = null;
-  if (me && !me.ageVerified) {
-    banner = (
-      <p className="border-b border-[var(--line)] px-5 py-2 text-xs text-[var(--muted)]">
-        Explicit chat and photos unlock after age verification.{" "}
-        <Link href="/verify" className="text-[var(--gold)] underline-offset-2 hover:underline">
-          Verify your age
-        </Link>
-      </p>
-    );
-  } else if (me && me.ageVerified && !me.settings.explicit) {
-    banner = (
-      <p className="border-b border-[var(--line)] px-5 py-2 text-xs text-[var(--muted)]">
-        Explicit chat is off.{" "}
-        <Link href="/settings" className="text-[var(--gold)] underline-offset-2 hover:underline">
-          Turn it on in Settings
-        </Link>
-      </p>
-    );
-  }
+    const panelProps = {
+      person,
+      canPhoto,
+      photoBusy,
+      photoReady: chatLoaded && Boolean(thread),
+    };
 
-  return (
-    <AppShell>
-      <AppHeader />
-      <section className="mx-auto grid max-w-5xl gap-6 px-4 pb-4 pt-4 sm:px-6 lg:grid-cols-[280px_1fr]">
-        <aside className="hidden lg:block">
-          <CharacterCard person={person}>
-            <Link
-              href={`/memories/${person.id}`}
-              className="mt-5 block rounded-full border border-white/20 px-4 py-2 text-center text-sm hover:bg-white/10"
-            >
-              What {name} remembers
-            </Link>
-          </CharacterCard>
-          {creditLine ? <p className="mt-3 px-1 text-xs text-[var(--muted)]">{creditLine}</p> : null}
-        </aside>
+    center = (
+      <section className="flex min-w-0 flex-1 flex-col" aria-label={`Chat with ${name}`}>
+        <ChatHeader person={person} subtitle={person.role} profileOpen={profileOpen} onToggleProfile={toggleProfile} />
+        {banner ? (
+          <p className="shrink-0 border-b border-[var(--line)] bg-[var(--accent-soft)] px-4 py-2 text-center text-xs text-[var(--ink)]">
+            {banner}
+          </p>
+        ) : null}
 
-        <div className="flex h-[calc(100dvh-9.5rem)] min-h-[420px] flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--bg-2)] lg:h-[calc(100dvh-6rem)]">
-          <div className="flex items-center gap-3 border-b border-[var(--line)] px-4 py-3 lg:hidden">
-            <span
-              className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full border border-white/10"
-              style={{ background: person.color }}
-            >
-              {person.image ? <img src={person.image} alt="" className="h-full w-full object-cover" /> : null}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">
-                {name}, {person.age}
-              </span>
-              {creditLine ? <span className="block truncate text-[11px] text-[var(--muted)]">{creditLine}</span> : null}
-            </span>
-            <Link href={`/memories/${person.id}`} className="shrink-0 text-xs text-[var(--gold)]">
-              Memories
-            </Link>
-          </div>
-          {banner}
-
-          <div ref={listRef} onScroll={onScroll} className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-5 sm:px-5">
+        <div ref={listRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
+          <div ref={contentRef} className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-3 px-3 py-5 sm:px-6">
             {chatProblem ? (
               <div className="m-auto max-w-sm text-center">
                 <p className="text-sm text-[var(--ink)]">{chatProblem.text}</p>
-                <button
-                  type="button"
+                <Button
+                  className="mt-4"
                   onClick={() => {
                     setHistoryProblem(null);
                     setHistoryRetry((count) => count + 1);
                   }}
-                  className="mt-4 rounded-full bg-[var(--gold)] px-5 py-2 text-sm font-medium !text-[#12110F]"
                 >
                   Try again
-                </button>
+                </Button>
               </div>
             ) : !chatLoaded ? (
-              <div className="flex flex-col gap-3" aria-label="Loading messages">
-                <div className="h-10 w-2/3 animate-pulse rounded-2xl bg-[var(--bg)]" />
-                <div className="ml-auto h-10 w-1/2 animate-pulse rounded-2xl bg-[var(--bg)]" />
-                <div className="h-16 w-3/4 animate-pulse rounded-2xl bg-[var(--bg)]" />
+              <div className="mt-auto flex flex-col gap-3" aria-label="Loading messages">
+                <div className="h-12 w-2/3 animate-pulse rounded-2xl bg-[var(--surface)]" />
+                <div className="ml-auto h-10 w-1/2 animate-pulse rounded-2xl bg-[var(--surface)]" />
+                <div className="h-16 w-3/4 animate-pulse rounded-2xl bg-[var(--surface)]" />
               </div>
             ) : (
               <>
@@ -735,160 +684,128 @@ export default function DatePage() {
                     type="button"
                     onClick={loadEarlier}
                     disabled={loadingEarlier}
-                    className="mx-auto rounded-full border border-[var(--line)] px-4 py-1.5 text-xs text-[var(--muted)] hover:text-[var(--ink)] disabled:opacity-60"
+                    className="mx-auto h-9 rounded-full border border-[var(--line)] bg-[var(--surface)] px-4 text-xs font-medium text-[var(--muted)] hover:text-[var(--ink)] disabled:opacity-60"
                   >
-                    {loadingEarlier ? "Loading…" : "Load earlier"}
+                    {loadingEarlier ? "Loading…" : "Load earlier messages"}
                   </button>
                 ) : (
-                  <p className="mx-auto max-w-sm text-center text-[11px] leading-5 text-[var(--muted)]">
-                    {name} is an AI character. Everything here is fiction between adults.
-                  </p>
+                  <div className="flex flex-col items-center pb-2 pt-4 text-center">
+                    <Avatar person={person} size="xl" />
+                    <p className="mt-3 text-lg font-bold tracking-tight text-[var(--ink)]">
+                      {name}, {person.age}
+                    </p>
+                    <p className="mt-1 max-w-sm text-[11px] leading-5 text-[var(--muted)]">
+                      {name} is an AI character. Everything here is fiction between adults.
+                    </p>
+                  </div>
                 )}
 
                 {messages.length === 0 && streamText === null ? (
                   <div className="m-auto max-w-sm py-10 text-center">
-                    <p className="font-[family-name:var(--font-display)] text-xl">Say hi to {name}.</p>
+                    <p className="text-xl font-bold tracking-tight text-[var(--ink)]">Say hi to {name}.</p>
                     <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{person.line}</p>
                   </div>
                 ) : null}
 
-                {messages.map((message) => {
-                  if (message.role === "notice") {
-                    return (
-                      <p key={message.id} className="mx-auto max-w-sm text-center text-[11px] leading-5 text-[var(--muted)]">
-                        {message.content}
-                      </p>
-                    );
-                  }
-                  const mine = message.role === "user";
-                  const extra = extras[message.id];
-                  const pending = message.id.startsWith("pending-");
-                  const image = message.media?.kind === "image" && message.media.status === "ready" ? message.media : null;
-                  return (
-                    <div key={message.id} className={`flex max-w-[85%] flex-col gap-2 ${mine ? "ml-auto items-end" : "items-start"}`}>
-                      {message.content ? (
-                        <p
-                          className={`whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm leading-6 ${
-                            mine ? "bg-[var(--gold)] text-[#12110F]" : "bg-[var(--bg)] text-[var(--ink)]"
-                          } ${pending ? "opacity-70" : ""}`}
-                        >
-                          <Rich text={message.content} />
-                        </p>
-                      ) : null}
-                      {message.media ? (
-                        <MediaView media={message.media} name={name} stalled={stalled.has(message.media.id)} />
-                      ) : null}
-                      {extra?.video ? <MediaView media={extra.video} name={name} stalled={stalled.has(extra.video.id)} /> : null}
-                      {extra?.voice ? <MediaView media={extra.voice} name={name} stalled={stalled.has(extra.voice.id)} /> : null}
-                      {!mine ? (
-                        <div className="flex flex-wrap items-center gap-3 text-[11px] text-[var(--muted)]">
-                          {canVoice && message.content && (!extra?.voice || extra.voice.status === "failed") ? (
-                            <button
-                              type="button"
-                              disabled={extra?.busy === "voice"}
-                              onClick={() => requestVoice(message)}
-                              className="hover:text-[var(--ink)] disabled:opacity-60"
-                            >
-                              {extra?.busy === "voice" ? "Recording…" : `Voice · ${COSTS.voiceNote} credits`}
-                            </button>
-                          ) : null}
-                          {canAnimate && image && (!extra?.video || extra.video.status === "failed") ? (
-                            <button
-                              type="button"
-                              disabled={extra?.busy === "video"}
-                              onClick={() => requestVideo(message, image)}
-                              className="hover:text-[var(--ink)] disabled:opacity-60"
-                            >
-                              {extra?.busy === "video" ? "Starting…" : `Animate · ${COSTS.video} credits`}
-                            </button>
-                          ) : null}
-                          {extra?.error ? <span className="text-[var(--ink)]">{extra.error}</span> : null}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                {messages.map((message) =>
+                  message.role === "notice" ? (
+                    <NoticeLine key={message.id}>{message.content}</NoticeLine>
+                  ) : (
+                    <MessageBubble
+                      key={message.id}
+                      message={message}
+                      person={person}
+                      extra={extras[message.id]}
+                      stalled={stalled}
+                      showAvatar={avatarIds.has(message.id)}
+                      canVoice={canVoice}
+                      canAnimate={canAnimate}
+                      onVoice={requestVoice}
+                      onVideo={requestVideo}
+                      onOpenPhoto={setLightbox}
+                    />
+                  ),
+                )}
 
                 {streamText !== null ? (
-                  <div className="flex max-w-[85%] flex-col items-start">
-                    <p className="whitespace-pre-wrap break-words rounded-2xl bg-[var(--bg)] px-4 py-3 text-sm leading-6 text-[var(--ink)]">
-                      {streamText ? (
-                        <Rich text={streamText} />
-                      ) : (
-                        <span className="inline-flex gap-1" aria-label={`${name} is typing`}>
-                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--muted)]" />
-                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--muted)] [animation-delay:150ms]" />
-                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--muted)] [animation-delay:300ms]" />
-                        </span>
-                      )}
-                    </p>
-                  </div>
+                  <StreamingBubble person={person} text={streamText} showAvatar={previous !== "assistant"} />
                 ) : null}
 
                 {crisis ? <CrisisCard resources={crisis} onClose={() => setCrisis(null)} /> : null}
               </>
             )}
           </div>
-
-          <div className="border-t border-[var(--line)] p-3 sm:p-4">
-            {problem ? (
-              <div className="mb-3">
-                <ProblemLine problem={problem} onDismiss={() => setProblem(null)} />
-              </div>
-            ) : null}
-            {canPhoto && chatLoaded ? (
-              <div className="mb-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={requestPhoto}
-                  disabled={photoBusy || !thread}
-                  className="rounded-full border border-[var(--line)] px-3 py-1.5 text-xs text-[var(--ink)] hover:bg-white/5 disabled:opacity-60"
-                  title={draft.trim() ? "Uses what you've typed as the idea for the photo" : undefined}
-                >
-                  {photoBusy ? "Asking…" : `Send me a photo · ${COSTS.photo} credits`}
-                </button>
-              </div>
-            ) : null}
-            <form
-              className="flex items-end gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void send();
-              }}
-            >
-              <textarea
-                ref={inputRef}
-                value={draft}
-                onChange={(event) => setDraft(event.target.value.slice(0, MAX_LENGTH))}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    void send();
-                  }
-                }}
-                rows={1}
-                maxLength={MAX_LENGTH}
-                placeholder={`Text ${name}`}
-                aria-label={`Message ${name}`}
-                disabled={!chatLoaded}
-                className="max-h-40 min-h-[48px] flex-1 resize-none rounded-3xl border border-[var(--line)] bg-[var(--bg)] px-4 py-3 text-sm leading-6 outline-none focus:border-[var(--gold)]/60 disabled:opacity-60"
-              />
-              <button
-                type="submit"
-                disabled={!draft.trim() || sending || !chatLoaded}
-                className="h-12 shrink-0 rounded-full bg-[var(--gold)] px-5 text-sm font-medium !text-[#12110F] disabled:opacity-50"
-              >
-                {sending ? "…" : "Send"}
-              </button>
-            </form>
-            {draft.length > MAX_LENGTH - 500 ? (
-              <p className="mt-1 text-right text-[11px] text-[var(--muted)]">
-                {draft.length.toLocaleString("en-US")} / {MAX_LENGTH.toLocaleString("en-US")}
-              </p>
-            ) : null}
-          </div>
         </div>
+
+        <Composer
+          name={name}
+          draft={draft}
+          onDraft={setDraft}
+          onSend={() => void send()}
+          sending={sending}
+          ready={chatLoaded}
+          maxLength={MAX_LENGTH}
+          textareaRef={inputRef}
+          problem={problem ? <ProblemLine problem={problem} onDismiss={() => setProblem(null)} /> : null}
+          photo={
+            canPhoto && chatLoaded
+              ? { onClick: () => void requestPhoto(), busy: photoBusy, disabled: photoBusy || !thread, cost: COSTS.photo }
+              : null
+          }
+          credits={creditLine ? { full: creditLine, short: creditShort, member: Boolean(me?.isMember) } : null}
+        />
       </section>
+    );
+
+    profile = (
+      <aside
+        aria-label={`${name}'s profile`}
+        className={cx(
+          "hidden w-[340px] shrink-0 border-l border-[var(--line)] bg-[var(--bg-2)]",
+          !profileHidden && "@min-[1180px]:block",
+        )}
+      >
+        <ProfilePanel {...panelProps} onClose={() => setProfileHidden(true)} closeLabel="Hide profile" onPhoto={() => void requestPhoto()} />
+      </aside>
+    );
+
+    overlays = (
+      <>
+        {sheetShown ? (
+          <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={`${name}'s profile`}>
+            <button
+              type="button"
+              aria-label="Close profile"
+              tabIndex={-1}
+              className="absolute inset-0 bg-black/70 transition-opacity starting:opacity-0"
+              onClick={() => setSheetOpen(false)}
+            />
+            <div className="absolute inset-y-0 right-0 w-full max-w-[400px] border-l border-[var(--line)] bg-[var(--bg-2)] shadow-[0_0_60px_rgba(0,0,0,0.6)] transition-transform duration-200 starting:translate-x-full">
+              <ProfilePanel
+                {...panelProps}
+                onClose={() => setSheetOpen(false)}
+                closeLabel="Close profile"
+                onPhoto={() => {
+                  setSheetOpen(false);
+                  void requestPhoto();
+                }}
+              />
+            </div>
+          </div>
+        ) : null}
+        {lightbox ? <Lightbox media={lightbox} name={name} onClose={closeLightbox} /> : null}
+      </>
+    );
+  }
+
+  return (
+    <AppShell>
+      <div ref={rootRef} className="@container flex h-full min-h-0">
+        {list}
+        {center}
+        {profile}
+      </div>
+      {overlays}
     </AppShell>
   );
 }
