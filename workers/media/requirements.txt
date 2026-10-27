@@ -1,0 +1,32 @@
+# PyTorch comes from the base image (see Dockerfile). Versions are floors, not
+# tested pins: pin exact versions once the worker has run on a real GPU.
+
+# ZImagePipeline (with its LoRA loader), ChromaPipeline and
+# WanImageToVideoPipeline (TI2V-5B). If `from diffusers import ZImagePipeline`
+# fails, install from main instead:
+#   diffusers @ git+https://github.com/huggingface/diffusers
+diffusers>=0.36.0
+transformers>=4.57.0
+# Long prompts for the anime model: SDXL reads 77 tokens, CompelForSDXL encodes
+# in chunks. compel 2.4+ requires Transformers 5 and Python 3.10+.
+compel>=2.4.0
+accelerate>=1.10.0
+peft>=0.17.0
+safetensors>=0.5.0
+sentencepiece>=0.2.0
+protobuf>=5.28.0
+ftfy>=6.2.0
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+httpx>=0.27.0
+pydantic>=2.8.0
+
+pillow>=10.4.0
+numpy>=1.26.0
+imageio>=2.35.0
+imageio-ffmpeg>=0.5.1
+
+# Anime apparent-age check (WD tagger).
+onnxruntime-gpu>=1.20.0
+huggingface_hub>=0.34.0

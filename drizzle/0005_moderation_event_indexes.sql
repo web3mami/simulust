@@ -1,0 +1,2 @@
+CREATE INDEX "moderation_events_target_idx" ON "moderation_events" USING btree ("target_id");--> statement-breakpoint
+CREATE INDEX "moderation_events_user_idx" ON "moderation_events" USING btree ("user_id","category","created_at");

@@ -1,71 +1,123 @@
-import https from "node:https";
+import { explicitAllowed, requireUser } from "@/server/auth";
+import { chargeFor, refund } from "@/server/credits";
+import { HttpError, route } from "@/server/http";
+import { moderateImage } from "@/server/image-moderation";
+import { generateImage, ImageGenerationError, workerRefusalCategory } from "@/server/images";
+import type { Media } from "@/server/db/schema";
+import { createMedia, failMedia, storeMedia, toMediaDTO } from "@/server/media";
+import { rateLimit } from "@/server/ratelimit";
+import { logModeration } from "@/server/safety/moderation";
+import { checkText, REFUSAL } from "@/server/safety/text";
 import { portraitPrompt, portraitRequest } from "@/lib/portrait-prompt";
+import { COSTS } from "@/lib/pricing";
 
-export const maxDuration = 60;
+// Image worker (110 s) and moderation (30 s) have to fit, or the platform kills
+// the request after charging.
+export const maxDuration = 300;
 
-function fetchPortrait(url: string, redirects = 0): Promise<{ status: number; type: string; body: Buffer }> {
-  return new Promise((resolve, reject) => {
-    const req = https.get(
-      url,
-      {
-        headers: {
-          Referer: "https://pollinations.ai/",
-          "User-Agent": "Mozilla/5.0",
-        },
-      },
-      (res) => {
-        const status = res.statusCode ?? 0;
-        const location = res.headers.location;
-        if (status >= 300 && status < 400 && location && redirects < 3) {
-          res.resume();
-          resolve(fetchPortrait(new URL(location, url).toString(), redirects + 1));
-          return;
-        }
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("end", () =>
-          resolve({
-            status,
-            type: String(res.headers["content-type"] ?? ""),
-            body: Buffer.concat(chunks),
-          }),
-        );
-      },
+// Creator portraits. They are clothed and tasteful, so anyone logged in can make
+// a character before verifying their age; explicit photos come later in chat.
+export const POST = route(async (request: Request) => {
+  const user = await requireUser(request);
+  await rateLimit(`portrait:${user.id}`, 20, 3600);
+
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  const choice = portraitRequest(body);
+  if (!choice) throw new HttpError(400, "Some choices are missing. Go back and pick every option.", "invalid");
+  // The name never reaches the model; it only labels development placeholder images.
+  const label = typeof body?.name === "string" && body.name.trim() ? body.name.trim().slice(0, 40) : "Your character";
+
+  const { prompt, negativePrompt } = portraitPrompt(choice, { suggestive: explicitAllowed(user) });
+  // Every choice comes from a fixed list, so this only trips if a list changes.
+  const verdict = checkText(prompt);
+  if (!verdict.ok) {
+    await logModeration({ userId: user.id, targetType: "image_prompt" }, verdict.category, "blocked", { matched: verdict.matched });
+    throw new HttpError(422, REFUSAL[verdict.category], `blocked_${verdict.category}`);
+  }
+
+  const row = await createMedia({
+    userId: user.id,
+    kind: "image",
+    purpose: "portrait",
+    prompt,
+    creditsSpent: COSTS.portrait,
+  });
+  try {
+    await chargeFor(user, "portrait", row.id);
+  } catch (error) {
+    await failMedia(row.id, "failed", "Not enough credits.");
+    throw error;
+  }
+
+  let image;
+  try {
+    image = await generateImage({
+      prompt,
+      negativePrompt,
+      width: 896,
+      height: 1152,
+      style: choice.style,
+      label,
+    });
+  } catch (error) {
+    console.error("Portrait generation failed", error);
+    const blocked = error instanceof ImageGenerationError && error.blocked;
+    if (blocked) {
+      const reason = (error as ImageGenerationError).reason ?? "";
+      await logModeration({ userId: user.id, targetType: "image", targetId: row.id }, workerRefusalCategory(reason), "blocked", {
+        reason: (reason || String((error as Error).message)).slice(0, 300),
+      });
+    }
+    await failMedia(row.id, blocked ? "blocked" : "failed", blocked ? "Blocked by the image worker." : "Generation failed.");
+    await refund(user.id, COSTS.portrait, row.id);
+    throw new HttpError(
+      502,
+      "We couldn't draw that portrait. Your credits are back. Try again in a moment.",
+      blocked ? "blocked" : "generation_failed",
     );
-    req.on("error", reject);
-    req.setTimeout(45000, () => req.destroy(new Error("Portrait request timed out.")));
+  }
+
+  const moderation = await moderateImage(image.bytes, image.mimeType, {
+    userId: user.id,
+    targetType: "image",
+    targetId: row.id,
+    allowExplicit: false,
   });
-}
-
-export async function POST(request: Request) {
-  const choice = portraitRequest(await request.json().catch(() => null));
-  if (!choice) {
-    return Response.json({ error: "Those choices cannot be drawn." }, { status: 400 });
+  if (!moderation.ok) {
+    await failMedia(
+      row.id,
+      moderation.unavailable ? "failed" : "blocked",
+      moderation.unavailable ? "Safety check unavailable." : `Blocked: ${moderation.categories.join(", ")}`,
+      { provider: image.provider, categories: moderation.categories, result: moderation.raw },
+    );
+    await refund(user.id, COSTS.portrait, row.id);
+    if (moderation.unavailable) {
+      throw new HttpError(503, "We couldn't safety-check that portrait. Your credits are back. Try again in a moment.", "moderation_unavailable");
+    }
+    throw new HttpError(
+      422,
+      "That portrait didn't pass our safety checks, so we didn't keep it. Your credits are back. Try again or change a few options.",
+      "image_blocked",
+    );
   }
 
-  const prompt = portraitPrompt(choice);
-  let image = { status: 0, type: "", body: Buffer.alloc(0) };
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const seed = Math.floor(Math.random() * 1_000_000_000);
-    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=768&height=1024&nologo=true&safe=false&enhance=false&seed=${seed}`;
-    image = await fetchPortrait(url);
-    if (image.status === 200 && image.type.startsWith("image/") && image.body.byteLength >= 1000) break;
-    if (attempt === 4) break;
-    await new Promise((resolve) => setTimeout(resolve, image.status === 429 ? 2000 : 500));
+  let stored: Media;
+  try {
+    stored = await storeMedia(row, image.bytes, image.mimeType, {
+      provider: image.provider,
+      seed: image.seed,
+      // Videos made from a portrait that isn't tied to a character yet read
+      // the style from here, for the worker's drawn-face age check.
+      style: choice.style,
+      categories: [],
+      result: moderation.raw,
+    });
+    if (stored.status !== "ready") throw new Error(`Portrait ${row.id} is ${stored.status}, not ready.`);
+  } catch (error) {
+    console.error("Saving the portrait failed", error);
+    await failMedia(row.id, "failed", "The portrait couldn't be saved.");
+    await refund(user.id, COSTS.portrait, row.id);
+    throw new HttpError(502, "We couldn't save that portrait. Your credits are back. Try again in a moment.", "generation_failed");
   }
-  if (image.status !== 200 || !image.type.startsWith("image/")) {
-    return Response.json({ error: "Portrait could not be generated. Try again." }, { status: 502 });
-  }
-
-  const bytes = image.body;
-  if (bytes.byteLength < 1000) {
-    return Response.json({ error: "Portrait could not be generated. Try again." }, { status: 502 });
-  }
-
-  return new Response(bytes, {
-    headers: {
-      "Content-Type": image.type.startsWith("image/") ? image.type : "image/jpeg",
-      "Cache-Control": "no-store",
-    },
-  });
-}
+  return Response.json({ media: toMediaDTO(stored) });
+});

@@ -837,30 +837,3 @@ export function laneOf(person: Character): Lane {
   if (person.gender === "Man" || person.gender === "Trans man") return "guys";
   return "girls";
 }
-
-export const PEOPLE_KEY = "simulust-people";
-
-export function loadPeople(): Character[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(PEOPLE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as Character[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export function savePerson(person: Character) {
-  const people = loadPeople().filter((item) => item.id !== person.id);
-  people.unshift(person);
-  window.localStorage.setItem(PEOPLE_KEY, JSON.stringify(people));
-}
-
-export function findCharacter(id: string): Character | undefined {
-  return (
-    SEED_CHARACTERS.find((character) => character.id === id) ??
-    loadPeople().find((character) => character.id === id)
-  );
-}

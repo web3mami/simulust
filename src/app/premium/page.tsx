@@ -7,7 +7,7 @@ export default function PremiumPage() {
   return (
     <AppShell>
       <AppHeader />
-      <Shop />
+      <Shop focus="membership" />
     </AppShell>
   );
 }
