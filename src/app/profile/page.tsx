@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { AVATAR_FILL } from "@/components/account-menu";
 import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
 import {
@@ -80,6 +81,8 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // Once the person types a name, nothing replaces it.
+  const nameTouched = useRef(false);
 
   const identity = session?.detail ?? null;
   const fallbackName = me && me.displayName !== "You" ? me.displayName : (session?.display ?? "");
@@ -108,6 +111,13 @@ export default function ProfilePage() {
     // fallbackName only seeds a new form; reloading when it changes would wipe edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [identity, api, attempt]);
+
+  // A new profile starts from the account's display name, which can arrive after
+  // the profile request (the login handle stands in until then).
+  useEffect(() => {
+    if (load.state !== "ready" || load.profile || nameTouched.current) return;
+    setForm((current) => ({ ...current, name: fallbackName.slice(0, NAME_MAX) }));
+  }, [fallbackName, load]);
 
   const saved = load.state === "ready" ? load.profile : null;
 
@@ -188,22 +198,25 @@ export default function ProfilePage() {
                 This is you. Characters will remember the name you set here.
               </p>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4 sm:gap-5">
               <Avatar initial={initialOf(form.name || session.display)} size="md" />
-              <p className="text-sm leading-6 text-[var(--muted)]">
-                We don&apos;t take photo uploads, so your initial stands in for a picture.
-              </p>
+              <label className="block min-w-0 flex-1">
+                <span className={fieldLabel}>Name</span>
+                <input
+                  value={form.name}
+                  maxLength={NAME_MAX}
+                  onChange={(event) => {
+                    nameTouched.current = true;
+                    setForm((current) => ({ ...current, name: event.target.value }));
+                  }}
+                  className={cx(inputClass, "mt-2 h-11")}
+                  autoComplete="nickname"
+                  enterKeyHint="next"
+                  required
+                />
+                <span className={fieldHint}>We don&apos;t take photo uploads, so your initial stands in for a picture.</span>
+              </label>
             </div>
-            <label className="block">
-              <span className={fieldLabel}>Name</span>
-              <input
-                value={form.name}
-                maxLength={NAME_MAX}
-                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                className={cx(inputClass, "mt-2 h-11")}
-                required
-              />
-            </label>
             <fieldset>
               <legend className={fieldLabel}>I am</legend>
               <div className="no-scrollbar -mx-1 mt-2 flex gap-2 overflow-x-auto px-1">
@@ -252,15 +265,15 @@ export default function ProfilePage() {
             {saveError ? (
               <Notice role="alert">{saveError}</Notice>
             ) : null}
-            <div className="flex flex-wrap gap-3">
-              <button type="submit" disabled={saving || !form.name.trim()} className={buttonClass("primary", "lg")}>
-                {saving ? "Saving…" : "Save profile"}
-              </button>
+            <div className="flex flex-col-reverse gap-3 border-t border-[var(--line)] pt-5 sm:flex-row sm:justify-end">
               {saved ? (
-                <Button variant="secondary" size="lg" disabled={saving} onClick={cancelEdit}>
+                <Button variant="ghost" size="lg" disabled={saving} onClick={cancelEdit}>
                   Cancel
                 </Button>
               ) : null}
+              <button type="submit" disabled={saving || !form.name.trim()} className={buttonClass("primary", "lg", "w-full sm:w-auto")}>
+                {saving ? "Saving…" : "Save profile"}
+              </button>
             </div>
           </form>
         ) : saved ? (
@@ -272,7 +285,7 @@ export default function ProfilePage() {
             <div className="px-5 pb-6 sm:px-6">
               <div className="-mt-12 flex flex-wrap items-end justify-between gap-4">
                 <Avatar initial={initialOf(saved.name)} size="lg" />
-                <Button size="lg" onClick={() => setEditing(true)}>
+                <Button onClick={() => setEditing(true)}>
                   <PencilIcon className="h-4 w-4" />
                   Edit profile
                 </Button>
@@ -317,13 +330,15 @@ export default function ProfilePage() {
   );
 }
 
+// The same filled avatar as the top bar, so it reads as the same person.
 function Avatar({ initial, size }: { initial: string; size: "md" | "lg" }) {
   return (
     <div
       aria-hidden
       className={cx(
-        "flex shrink-0 items-center justify-center rounded-full bg-[var(--surface-2)] font-bold text-[var(--accent)] ring-2 ring-[var(--accent)]/60",
-        size === "lg" ? "h-24 w-24 text-4xl outline outline-4 outline-[var(--surface)]" : "h-20 w-20 text-3xl",
+        "flex shrink-0 items-center justify-center rounded-full",
+        AVATAR_FILL,
+        size === "lg" ? "h-24 w-24 text-4xl outline outline-4 outline-[var(--surface)]" : "h-16 w-16 text-2xl sm:h-20 sm:w-20 sm:text-3xl",
       )}
     >
       {initial}
@@ -350,15 +365,17 @@ function AccountCard({ session, me, onSignOut }: { session: Session; me: Me | nu
             </AccountRow>
             <AccountRow label="Plan" href="/premium" linkLabel={me.isMember ? "Manage" : "Go Premium"} premium>
               {me.isMember ? (
-                <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--premium)]">
-                  <PremiumIcon className="h-4 w-4" />
-                  Premium
+                <>
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--premium)]">
+                    <PremiumIcon className="h-4 w-4" />
+                    Premium
+                  </span>
                   {me.memberUntil ? (
-                    <span className="font-normal text-[var(--muted)]">
-                      until {new Date(me.memberUntil).toLocaleDateString(undefined, { dateStyle: "medium" })}
+                    <span className="block text-xs text-[var(--muted)]">
+                      Until {new Date(me.memberUntil).toLocaleDateString(undefined, { dateStyle: "medium" })}
                     </span>
                   ) : null}
-                </span>
+                </>
               ) : (
                 <span className="font-semibold text-[var(--ink)]">Free</span>
               )}
@@ -373,7 +390,7 @@ function AccountCard({ session, me, onSignOut }: { session: Session; me: Me | nu
         <Link href="/settings" className={buttonClass("secondary", "md", "flex-1")}>
           Settings
         </Link>
-        <Button variant="secondary" className="flex-1" onClick={onSignOut}>
+        <Button variant="ghost" className="flex-1" onClick={onSignOut}>
           <SignOutIcon className="h-4 w-4" />
           Log out
         </Button>
@@ -422,13 +439,13 @@ function ProfileSkeleton() {
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]" aria-busy="true" aria-label="Loading your profile">
       <Panel className="overflow-hidden">
-        <div className="h-28 animate-pulse bg-white/[0.04] sm:h-32" />
+        <div className="h-28 animate-pulse bg-white/[0.04] motion-reduce:animate-none sm:h-32" />
         <div className="px-5 pb-6 sm:px-6">
-          <div className="-mt-12 h-24 w-24 animate-pulse rounded-full bg-[var(--surface-2)] outline outline-4 outline-[var(--surface)]" />
-          <div className="mt-4 h-7 w-48 animate-pulse rounded-full bg-white/[0.06]" />
+          <div className="-mt-12 h-24 w-24 animate-pulse rounded-full bg-[var(--surface-2)] outline outline-4 outline-[var(--surface)] motion-reduce:animate-none" />
+          <div className="mt-4 h-7 w-48 animate-pulse rounded-full bg-white/[0.06] motion-reduce:animate-none" />
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <div className="h-16 animate-pulse rounded-xl bg-white/[0.04]" />
-            <div className="h-16 animate-pulse rounded-xl bg-white/[0.04]" />
+            <div className="h-16 animate-pulse rounded-xl bg-white/[0.04] motion-reduce:animate-none" />
+            <div className="h-16 animate-pulse rounded-xl bg-white/[0.04] motion-reduce:animate-none" />
           </div>
         </div>
       </Panel>

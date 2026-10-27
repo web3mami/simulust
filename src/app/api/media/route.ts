@@ -18,6 +18,8 @@ const query = z.object({
   before: z.iso.datetime({ offset: true, error: "before must be an ISO date." }).optional(),
   limit: z.coerce.number().int().min(1).max(60).default(30),
   kind: z.enum(["image", "video"]).optional(),
+  // One character's media: the chat's photo gallery, the collection's filter.
+  characterId: z.string().trim().min(1).max(64).optional(),
 });
 
 // The signed-in user's own ready media, newest first. Paged by `before`, the
@@ -27,10 +29,11 @@ const query = z.object({
 export const GET = route(async (request: Request) => {
   const user = await requireUser(request);
   const params = new URL(request.url).searchParams;
-  const { before, limit, kind } = query.parse({
+  const { before, limit, kind, characterId } = query.parse({
     before: params.get("before") ?? undefined,
     limit: params.get("limit") ?? undefined,
     kind: params.get("kind") ?? undefined,
+    characterId: params.get("characterId") ?? undefined,
   });
 
   const database = await db();
@@ -43,6 +46,7 @@ export const GET = route(async (request: Request) => {
         eq(media.status, "ready"),
         inArray(media.kind, kind ? [kind] : ["image", "video"]),
         inArray(media.purpose, PURPOSES),
+        characterId ? eq(media.characterId, characterId) : undefined,
         before ? lt(media.createdAt, new Date(new Date(before).getTime() + 1)) : undefined,
       ),
     )

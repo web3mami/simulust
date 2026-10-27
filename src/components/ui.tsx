@@ -1,9 +1,15 @@
+import Image from "next/image";
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
 import type { Character } from "@/lib/characters";
 
 // Shared building blocks for every screen, so buttons, chips and cards look the
 // same everywhere. Colours come from the tokens in globals.css.
+
+// The same side gutters and top/bottom padding on every page, so titles don't
+// jump sideways when you move between screens.
+export const PAGE_GUTTER = "px-4 sm:px-6 lg:px-8";
+export const PAGE_PAD_Y = "pt-6 pb-12 sm:pt-8";
 
 export function cx(...names: (string | false | null | undefined)[]) {
   return names.filter(Boolean).join(" ");
@@ -27,9 +33,15 @@ const SIZES: Record<Size, string> = {
   lg: "h-12 px-6 text-base gap-2",
 };
 
+// A quick shrink on press so taps on a phone feel answered; none for people
+// who ask for less motion.
+const PRESS =
+  "transition-[background-color,color,border-color,transform,filter] duration-150 active:scale-[0.97] motion-reduce:active:scale-100";
+
 export function buttonClass(variant: Variant = "primary", size: Size = "md", extra?: string) {
   return cx(
-    "inline-flex shrink-0 items-center justify-center rounded-full font-semibold transition-colors disabled:pointer-events-none disabled:opacity-50",
+    "inline-flex shrink-0 items-center justify-center rounded-full font-semibold disabled:pointer-events-none disabled:opacity-50",
+    PRESS,
     VARIANTS[variant],
     SIZES[size],
     extra,
@@ -69,7 +81,8 @@ export function Chip({
       type={type}
       aria-pressed={active}
       className={cx(
-        "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full px-4 text-sm font-medium transition-colors",
+        "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full px-4 text-sm font-medium",
+        PRESS,
         active
           ? "bg-[var(--accent)] text-[var(--accent-ink)]"
           : "border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] hover:border-white/25",
@@ -148,16 +161,27 @@ export function Badge({ tone = "accent", className, ...props }: ComponentProps<"
 
 // A portrait card: the picture fills it, name and age sit on a fade at the
 // bottom, and the persona line shows on hover.
+// Our own art in /public can be resized by next/image; generated media can't.
+export function isStaticArt(src: string) {
+  return /^\/(?:characters|hero|creator)\//.test(src);
+}
+
+// Card widths in the 2-to-6 column grids, so phones never download desktop-size art.
+export const CARD_SIZES = "(min-width: 1536px) 16vw, (min-width: 1280px) 20vw, (min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw";
+
 export function CharacterCard({
   person,
   href = `/date/${person.id}`,
   badge,
   className,
+  priority = false,
 }: {
   person: Pick<Character, "id" | "name" | "age" | "image" | "color" | "role" | "line"> & { body?: string };
   href?: string;
   badge?: ReactNode;
   className?: string;
+  // The first row on screen, so it isn't lazy-loaded.
+  priority?: boolean;
 }) {
   return (
     <Link
@@ -169,11 +193,16 @@ export function CharacterCard({
       style={person.image ? undefined : { background: person.color }}
     >
       {person.image ? (
-        <img
+        <Image
           src={person.image}
           alt=""
-          loading="lazy"
-          className="absolute inset-0 h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]"
+          fill
+          sizes={CARD_SIZES}
+          // Next 16 deprecates `priority`; eager and high fetch priority do the same job.
+          loading={priority ? "eager" : undefined}
+          fetchPriority={priority ? "high" : undefined}
+          unoptimized={!isStaticArt(person.image)}
+          className="object-cover transition duration-500 group-hover:scale-[1.04]"
         />
       ) : null}
       {badge ? <div className="absolute left-2.5 top-2.5 z-10 flex gap-1">{badge}</div> : null}
@@ -190,10 +219,34 @@ export function CharacterCard({
   );
 }
 
+// A grey placeholder in the shape of what's loading.
+export function Skeleton({ className }: { className?: string }) {
+  return <div aria-hidden className={cx("animate-pulse rounded-2xl bg-[var(--surface)] motion-reduce:animate-none", className)} />;
+}
+
 // Shown where a list is empty: what's missing and the one thing to do next.
-export function EmptyState({ title, body, action }: { title: string; body?: ReactNode; action?: ReactNode }) {
+export function EmptyState({
+  title,
+  body,
+  action,
+  icon,
+}: {
+  title: string;
+  body?: ReactNode;
+  action?: ReactNode;
+  // Optional: a line icon shown in a soft accent circle above the title.
+  icon?: ReactNode;
+}) {
   return (
     <Panel className="flex flex-col items-center px-6 py-12 text-center">
+      {icon ? (
+        <span
+          aria-hidden
+          className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]"
+        >
+          {icon}
+        </span>
+      ) : null}
       <p className="text-base font-semibold text-[var(--ink)]">{title}</p>
       {body ? <p className="mt-2 max-w-sm text-sm leading-6 text-[var(--muted)]">{body}</p> : null}
       {action ? <div className="mt-5">{action}</div> : null}

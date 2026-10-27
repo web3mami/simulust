@@ -61,16 +61,28 @@ export function matchesQuery(person: Character, query: string) {
   return haystack.includes(needle);
 }
 
-// Tags in the list, most common first.
-export function tagsOf(people: Character[]) {
+// Tags in the list, most common first. Only official characters count: a
+// user's own character carries its hair and eye colours as tags, which would
+// read as odd public filters ("Black", "Brown"). A tag on just one person
+// isn't much of a filter either.
+export function tagsOf(people: Character[], minCount = 2) {
   const counts = new Map<string, number>();
   for (const person of people) {
+    if (isOwnCharacter(person)) continue;
     for (const tag of person.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + 1);
   }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([tag]) => tag);
+  return [...counts.entries()]
+    .filter(([, count]) => count >= minCount)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([tag]) => tag);
 }
 
 type Loaded = { key: string | null; characters: CharacterDTO[] | null; error?: string };
+
+// The last good answer, so moving between Home, Discover and My AI renders the
+// real list at once (and refreshes it behind the scenes) instead of flashing
+// the seeds and swapping.
+let lastLoaded: Loaded | null = null;
 
 // Everyone the current user can see. Until the API answers (or if it fails),
 // the official seeds stand in so the page never renders empty.
@@ -78,7 +90,7 @@ export function useCatalogue() {
   const { ready, session } = useSession();
   const api = useApi();
   const key = session?.detail ?? null;
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [loaded, setLoaded] = useState<Loaded | null>(() => lastLoaded);
   const [attempt, setAttempt] = useState(0);
   const [removed, setRemoved] = useState<string[]>([]);
 
@@ -88,6 +100,7 @@ export function useCatalogue() {
     void (async () => {
       try {
         const { characters } = await api<{ characters: CharacterDTO[] }>("/api/characters");
+        lastLoaded = { key, characters };
         if (!cancelled) setLoaded({ key, characters });
       } catch (error) {
         if (!cancelled) {
@@ -115,7 +128,12 @@ export function useCatalogue() {
     setLoaded(null);
     setAttempt((count) => count + 1);
   }, []);
-  const remove = useCallback((id: string) => setRemoved((ids) => [...ids, id]), []);
+  const remove = useCallback((id: string) => {
+    if (lastLoaded?.characters) {
+      lastLoaded = { ...lastLoaded, characters: lastLoaded.characters.filter((person) => person.id !== id) };
+    }
+    setRemoved((ids) => [...ids, id]);
+  }, []);
 
   return { characters, status, error: current?.error, retry, remove };
 }
@@ -140,3 +158,119 @@ export function relativeTime(iso: string, now = Date.now()) {
 
 // Page content width and gutters, the same on every screen in this area.
 export const PAGE = "mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8";
+
+// The vertical rhythm of an inner page (Discover, My AI, Collection), so the
+// header doesn't jump when moving between them.
+export const PAGE_STACK = "flex flex-col gap-6 pb-12 pt-5 sm:gap-8 sm:pt-8";
+
+export const LANE_NOUN: Record<Lane, string> = { girls: "AI girls", anime: "anime characters", guys: "AI guys" };
+export const LANE_LABEL: Record<Lane, string> = { girls: "Girls", anime: "Anime", guys: "Guys" };
+export const LANES: Lane[] = ["girls", "anime", "guys"];
+
+export function parseLane(value: string | null | undefined): Lane | null {
+  return value === "girls" || value === "anime" || value === "guys" ? value : null;
+}
+
+// ---------------------------------------------------------------------------
+// Themes: the rows on Home and the "See all" filters on Discover. Each is a
+// rule over fields every character really has, so a row only ever shows people
+// who fit it.
+
+export type Theme = {
+  id: string;
+  // Short name for a filter pill; the row title is accent + title.
+  label: string;
+  accent: string;
+  title: string;
+  match: (person: Character) => boolean;
+};
+
+const hasTag = (person: Character, ...tags: string[]) => (person.tags ?? []).some((tag) => tags.includes(tag));
+
+export const THEMES: Theme[] = [
+  {
+    id: "romance",
+    label: "Romance",
+    accent: "Romance",
+    title: "and devotion",
+    match: (p) => ["Girlfriend", "Boyfriend", "Wife", "Husband", "Exclusive"].includes(p.role),
+  },
+  {
+    id: "fantasy",
+    label: "Fantasy",
+    accent: "Fantasy",
+    title: "and otherworldly",
+    match: (p) => hasTag(p, "Devil", "Fantasy", "Robot", "Goth"),
+  },
+  {
+    id: "dominant",
+    label: "Dominant",
+    accent: "Dominant",
+    title: "and in charge",
+    match: (p) => p.role === "Dominant" || hasTag(p, "Dominant"),
+  },
+  { id: "curvy", label: "Curvy & thick", accent: "Curvy", title: "and thick", match: (p) => p.body === "Curvy" || p.body === "Thick" },
+  { id: "busty", label: "Busty", accent: "Busty", title: "and bold", match: (p) => hasTag(p, "Busty") },
+  { id: "strangers", label: "Strangers", accent: "Strangers", title: "you just met", match: (p) => p.role === "Stranger" },
+  {
+    id: "built",
+    label: "Athletic",
+    accent: "Athletic",
+    title: "and built",
+    match: (p) => p.body === "Athletic" || p.body === "Muscular",
+  },
+  {
+    id: "casual",
+    label: "No strings",
+    accent: "No strings",
+    title: "attached",
+    match: (p) => p.role === "Friends with benefits" || p.role === "Situationship",
+  },
+];
+
+export function themeById(id: string | null | undefined) {
+  return THEMES.find((theme) => theme.id === id) ?? null;
+}
+
+// A row needs enough people to be worth scrolling.
+export const MIN_ROW = 4;
+
+// Home shows a few themed rows, not all of them: a lane has about 25 people, so
+// every extra row mostly repeats faces. The rest are a filter away on Discover.
+export const HOME_ROWS = 4;
+
+// The themes a lane has enough people for, each with its people in featured
+// order. Picked one at a time by how many faces they add that earlier rows
+// haven't shown, so the rows feel different from each other.
+export function themedRows<T extends Character>(featured: T[], limit = HOME_ROWS) {
+  const candidates = THEMES.map((theme) => ({ theme, people: featured.filter(theme.match) })).filter(
+    (row) => row.people.length >= MIN_ROW,
+  );
+  const shown = new Set<string>();
+  const picked: typeof candidates = [];
+  while (picked.length < limit && candidates.length) {
+    let best = 0;
+    let bestNew = -1;
+    candidates.forEach((row, index) => {
+      const fresh = row.people.filter((person) => !shown.has(person.id)).length;
+      if (fresh > bestNew) [best, bestNew] = [index, fresh];
+    });
+    if (bestNew < 2) break;
+    const [row] = candidates.splice(best, 1);
+    row.people.forEach((person) => shown.add(person.id));
+    picked.push(row);
+  }
+  // Back in THEMES order, so the page reads the same way on every visit.
+  return picked.sort((a, b) => THEMES.indexOf(a.theme) - THEMES.indexOf(b.theme));
+}
+
+// A link into Discover with only the filters that are set.
+export function discoverHref(filters: { lane?: Lane; theme?: string; tag?: string; q?: string }) {
+  const params = new URLSearchParams();
+  if (filters.lane) params.set("lane", filters.lane);
+  if (filters.theme) params.set("theme", filters.theme);
+  if (filters.tag && filters.tag !== "All") params.set("tag", filters.tag);
+  if (filters.q?.trim()) params.set("q", filters.q.trim());
+  const query = params.toString();
+  return query ? `/discover?${query}` : "/discover";
+}

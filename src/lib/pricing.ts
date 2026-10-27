@@ -61,7 +61,6 @@ export const MEMBERSHIP: Product = {
   perks: [
     "Unlimited messages (fair use)",
     "400 credits for photos, voice and video",
-    "No daily message limit to watch",
     "No auto-renew. Top up when you want.",
   ],
   featured: true,

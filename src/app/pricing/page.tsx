@@ -3,18 +3,10 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
 import { CoinIcon } from "@/components/icons";
-import { COST_ACTIONS, CheckIcon, per100 } from "@/components/premium/parts";
+import { COST_ACTIONS, CheckIcon, MEMBER_PERKS, TrustRow, formatUsdDisplay, per100 } from "@/components/premium/parts";
 import { PremiumIcon } from "@/components/premium-icon";
 import { ButtonLink, PageHeader, SectionTitle, cx } from "@/components/ui";
-import {
-  COSTS,
-  FREE,
-  MEMBER_DAILY_MESSAGE_CAP,
-  MEMBERSHIP,
-  PRODUCTS,
-  formatCredits,
-  formatUsd,
-} from "@/lib/pricing";
+import { COSTS, FREE, MEMBER_DAILY_MESSAGE_CAP, MEMBERSHIP, PRODUCTS, formatCredits, formatUsd } from "@/lib/pricing";
 
 export const metadata: Metadata = {
   title: "Pricing · Simulust",
@@ -54,8 +46,9 @@ function Bullets({ items }: { items: ReactNode[] }) {
 }
 
 // A table on wider screens; on phones each row becomes a small card so nothing
-// scrolls sideways. Columns with an empty heading read as a note.
-function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
+// scrolls sideways. Columns with an empty heading read as a note; numeric ones
+// line up on the right.
+function Table({ head, rows, numeric = [] }: { head: string[]; rows: ReactNode[][]; numeric?: number[] }) {
   return (
     <>
       <ul className="mt-4 space-y-2 sm:hidden">
@@ -84,19 +77,19 @@ function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
           </li>
         ))}
       </ul>
-      <TableWide head={head} rows={rows} />
+      <TableWide head={head} rows={rows} numeric={numeric} />
     </>
   );
 }
 
-function TableWide({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
+function TableWide({ head, rows, numeric }: { head: string[]; rows: ReactNode[][]; numeric: number[] }) {
   return (
     <div className="mt-4 hidden overflow-x-auto rounded-2xl bg-[var(--surface)] ring-1 ring-white/5 sm:block">
       <table className="w-full min-w-[30rem] text-left text-sm">
         <thead className="bg-[var(--surface-2)] text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
           <tr>
             {head.map((cell, index) => (
-              <th key={cell || index} scope="col" className="px-4 py-3 font-semibold">
+              <th key={cell || index} scope="col" className={cx("px-4 py-3 font-semibold", numeric.includes(index) && "text-right")}>
                 {cell}
               </th>
             ))}
@@ -111,6 +104,7 @@ function TableWide({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
                   className={cx(
                     "px-4 py-3.5 align-top",
                     column === 0 ? "font-semibold text-[var(--ink)]" : "text-[var(--muted)]",
+                    numeric.includes(column) && "text-right tabular-nums",
                   )}
                 >
                   {cell}
@@ -131,6 +125,7 @@ function SummaryCard({
   points,
   highlight,
   icon,
+  action,
 }: {
   label: string;
   price: string;
@@ -138,27 +133,34 @@ function SummaryCard({
   points: string[];
   highlight?: boolean;
   icon: ReactNode;
+  action?: ReactNode;
 }) {
   return (
     <div
       className={cx(
-        "rounded-2xl bg-[var(--surface)] p-5",
-        highlight ? "ring-2 ring-[var(--accent)]" : "ring-1 ring-white/5",
+        "flex flex-col rounded-2xl bg-[var(--surface)] p-4 sm:p-5",
+        highlight
+          ? "bg-[linear-gradient(180deg,var(--accent-soft),transparent_55%)] ring-2 ring-[var(--accent)]"
+          : "ring-1 ring-white/5",
       )}
     >
       <p className="flex items-center gap-2 text-sm font-semibold text-[var(--muted)]">
         {icon}
         {label}
       </p>
-      <p className="mt-3 text-3xl font-bold tracking-tight text-[var(--ink)]">
+      <p className="mt-2 text-2xl font-bold tracking-tight text-[var(--ink)] sm:mt-3 sm:text-3xl">
         {price}
         {unit ? <span className="ml-1.5 text-sm font-medium text-[var(--muted)]">{unit}</span> : null}
       </p>
-      <ul className="mt-3 space-y-1 text-sm text-[var(--muted)]">
+      <ul className="mt-2 space-y-1 text-sm text-[var(--muted)] sm:mt-3">
         {points.map((point) => (
-          <li key={point}>{point}</li>
+          <li key={point} className="flex items-start gap-2">
+            <CheckIcon className="mt-1 h-3 w-3 text-[var(--accent)]" />
+            {point}
+          </li>
         ))}
       </ul>
+      {action ? <div className="mt-auto pt-4">{action}</div> : null}
     </div>
   );
 }
@@ -187,6 +189,11 @@ export default function PricingPage() {
             icon={<PremiumIcon className="h-4 w-4 text-[var(--premium)]" />}
             points={["Unlimited messages", `${formatCredits(MEMBERSHIP.credits)} included`, "No auto-renew"]}
             highlight
+            action={
+              <ButtonLink href="/premium" size="sm" className="h-10 w-full sm:w-auto">
+                See membership
+              </ButtonLink>
+            }
           />
           <SummaryCard
             label="Credit packs"
@@ -196,8 +203,14 @@ export default function PricingPage() {
               `${PRODUCTS[0].credits.toLocaleString("en-US")} to ${PRODUCTS[PRODUCTS.length - 1].credits.toLocaleString("en-US")} credits`,
               "Never expire",
             ]}
+            action={
+              <ButtonLink href="/packs" variant="secondary" size="sm" className="h-10 w-full !bg-[var(--surface-2)] hover:!bg-white/10 sm:w-auto">
+                See packs
+              </ButtonLink>
+            }
           />
         </div>
+        <TrustRow className="mt-4 sm:justify-start" />
 
         <Section accent="Free" title="account">
           <Bullets
@@ -216,13 +229,16 @@ export default function PricingPage() {
           </p>
           <div className="mt-4">
             <Bullets
-              items={[
-                ...MEMBERSHIP.perks,
-                <>
-                  &ldquo;Unlimited&rdquo; has a fair-use ceiling of {MEMBER_DAILY_MESSAGE_CAP} messages a day so one
-                  account can&apos;t run the model around the clock.
-                </>,
-              ]}
+              items={MEMBER_PERKS.map((perk, index) =>
+                index === 0 ? (
+                  <>
+                    {perk.title}. &ldquo;Unlimited&rdquo; has a fair-use ceiling of {MEMBER_DAILY_MESSAGE_CAP} messages a
+                    day so one account can&apos;t run the model around the clock.
+                  </>
+                ) : (
+                  `${perk.title}.${perk.note ? ` ${perk.note}.` : ""}`
+                ),
+              )}
             />
           </div>
         </Section>
@@ -231,6 +247,7 @@ export default function PricingPage() {
           <p>Credits pay for photos, voice notes, video, and messages past your free ones.</p>
           <Table
             head={["Pack", "Price", "Credits", "Per 100 credits"]}
+            numeric={[1, 2, 3]}
             rows={PRODUCTS.map((product) => [
               <span key="name" className="inline-flex flex-wrap items-center gap-2">
                 {product.name}
@@ -256,6 +273,7 @@ export default function PricingPage() {
           </p>
           <Table
             head={["Action", "Credits", "About", ""]}
+            numeric={[1, 2]}
             rows={COST_ACTIONS.map((action) => [
               action.label,
               <span key="credits" className="font-semibold text-[var(--ink)]">
@@ -276,7 +294,7 @@ export default function PricingPage() {
               "USDC is charged one to one with the dollar price.",
               "SOL is priced at checkout from two independent price feeds and held for 15 minutes. If the feeds disagree, we ask you to pay in USDC instead of guessing.",
               "Every payment is a Solana transaction, so your receipt lives on chain.",
-              `Purchases are capped at ${formatUsd(100_000)} per account per day.`,
+              `Purchases are capped at ${formatUsdDisplay(100_000)} per account per day.`,
               "We screen paying wallets against sanctions lists, as the law requires.",
             ]}
           />

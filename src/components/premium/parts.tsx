@@ -1,16 +1,19 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { CameraIcon, ChatIcon, ChevronRightIcon, CoinIcon, MicIcon, PlayIcon, UserIcon } from "@/components/icons";
+import { PremiumIcon } from "@/components/premium-icon";
 import { cx } from "@/components/ui";
 import {
   COSTS,
   FREE,
   MEMBER_DAILY_MESSAGE_CAP,
   MEMBERSHIP,
+  PRODUCTS,
   formatUsd,
   type CostKey,
   type Product,
 } from "@/lib/pricing";
+import styles from "@/components/premium/motion.module.css";
 
 // Pieces shared by the Premium and credit pack pages, the checkout and the
 // public price list. No hooks here, so server pages can use them too.
@@ -50,13 +53,137 @@ export function CurrencyMark({ currency, className = "h-6 w-6 text-[11px]" }: { 
   );
 }
 
-// Cost of 100 credits in a pack, to make the bonus visible.
+// Cost of 100 credits in a pack, to make the bonus visible. The one unit every
+// page uses for value, so a pack card and the price table always agree.
 export function per100(product: Product) {
   return formatUsd(Math.round((product.usdCents / product.credits) * 100));
 }
 
-export function perCredit(product: Product) {
-  return `${(product.usdCents / product.credits).toFixed(2)}¢`;
+// The pack with the lowest price per credit, worked out rather than claimed.
+export const BEST_VALUE_ID = [...PRODUCTS].sort((a, b) => a.usdCents / a.credits - b.usdCents / b.credits)[0]?.id;
+
+// What a number of credits buys at the published costs, e.g. "≈ 62 photos or 8 videos".
+export function creditsBuy(credits: number) {
+  return `≈ ${Math.floor(credits / COSTS.photo).toLocaleString("en-US")} photos or ${Math.floor(credits / COSTS.video).toLocaleString("en-US")} videos`;
+}
+
+// "Nov 26, 2026", the same in every browser, to match the en-US numbers.
+export function formatDate(iso: string) {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// For reading only: "$1,000" or "$12.99". Amounts charged still use formatUsd.
+export function formatUsdDisplay(cents: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: cents % 100 ? 2 : 0,
+    maximumFractionDigits: cents % 100 ? 2 : 0,
+  }).format(cents / 100);
+}
+
+// What membership adds, each point said once. Built from the same constants
+// the server enforces.
+export const MEMBER_PERKS: { title: string; note?: string }[] = [
+  { title: "Unlimited messages", note: `Fair use: up to ${MEMBER_DAILY_MESSAGE_CAP} a day` },
+  { title: `${MEMBERSHIP.credits} credits for photos, voice and video`, note: "Credits never expire" },
+  { title: "No auto-renew", note: "Top up when you want" },
+];
+
+// The payment and trust marks shown next to every buy button.
+export function TrustRow({ className, compact }: { className?: string; compact?: boolean }) {
+  const chip = "inline-flex h-7 items-center gap-1 rounded-full bg-white/5 px-2 text-xs font-medium text-[var(--ink)]/85";
+  const points = compact ? ["No auto-renew", "Credits never expire"] : ["No auto-renew", "Credits never expire", "Receipt on chain"];
+  return (
+    <ul className={cx("flex flex-wrap justify-center gap-1.5", className)} aria-label="How you pay">
+      <li className={chip}>
+        <span className="flex -space-x-1">
+          <CurrencyMark currency="USDC" className="h-4 w-4 text-[9px] ring-1 ring-[var(--surface)]" />
+          <CurrencyMark currency="SOL" className="h-4 w-4 text-[9px] ring-1 ring-[var(--surface)]" />
+        </span>
+        USDC or SOL
+      </li>
+      {points.map((point) => (
+        <li key={point} className={chip}>
+          <CheckIcon className="h-3 w-3 text-[var(--accent)]" />
+          {point}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Free next to Member, line by line, from the published constants only.
+const COMPARE: { label: string; icon: ReactNode; free: string; member: string }[] = [
+  {
+    label: "Messages",
+    icon: <ChatIcon className="h-4 w-4" />,
+    free: `${FREE.dailyMessages} a day, then ${COSTS.message} credit each`,
+    member: `Unlimited (fair use, ${MEMBER_DAILY_MESSAGE_CAP} a day)`,
+  },
+  {
+    label: "Credits",
+    icon: <CoinIcon className="h-4 w-4" />,
+    free: `${FREE.signupCredits} when you sign up`,
+    member: `${MEMBERSHIP.credits} with every ${MEMBERSHIP.memberDays} days`,
+  },
+  {
+    label: "Photos, voice, video",
+    icon: <CameraIcon className="h-4 w-4" />,
+    free: "Paid with credits",
+    member: "Paid with credits",
+  },
+  {
+    label: "Price",
+    icon: <PremiumIcon className="h-4 w-4" />,
+    free: "$0",
+    member: `${formatUsd(MEMBERSHIP.usdCents)} for ${MEMBERSHIP.memberDays} days, no auto-renew`,
+  },
+];
+
+export function CompareTable() {
+  return (
+    <div className="overflow-hidden rounded-2xl bg-[var(--surface)] ring-1 ring-white/5">
+      <table className="w-full table-fixed text-left text-sm">
+        <caption className="sr-only">Free account compared with membership</caption>
+        <colgroup>
+          <col className="w-[34%] sm:w-[28%]" />
+          <col />
+          <col />
+        </colgroup>
+        <thead>
+          <tr className="text-xs font-bold uppercase tracking-wide">
+            <th scope="col" className="px-3 py-3 sm:px-5">
+              <span className="sr-only">What you get</span>
+            </th>
+            <th scope="col" className="px-3 py-3 text-[var(--muted)] sm:px-5">
+              Free
+            </th>
+            <th scope="col" className="bg-[var(--accent-soft)] px-3 py-3 text-[var(--accent)] sm:px-5">
+              <span className="inline-flex items-center gap-1.5">
+                <PremiumIcon className="h-3.5 w-3.5 text-[var(--premium)]" />
+                Member
+              </span>
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--line)] border-t border-[var(--line)]">
+          {COMPARE.map((row) => (
+            <tr key={row.label}>
+              <th scope="row" className="px-3 py-3.5 align-top font-semibold text-[var(--ink)] sm:px-5">
+                <span className="flex items-start gap-2">
+                  <span className="mt-0.5 hidden text-[var(--muted)] sm:inline">{row.icon}</span>
+                  {row.label}
+                </span>
+              </th>
+              <td className="px-3 py-3.5 align-top text-[var(--muted)] sm:px-5">{row.free}</td>
+              <td className="bg-[var(--accent-soft)] px-3 py-3.5 align-top font-medium text-[var(--ink)] sm:px-5">{row.member}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 export const COST_ACTIONS: { key: CostKey; label: string; note?: string; icon: ReactNode }[] = [
@@ -243,21 +370,24 @@ const FAQ: { q: string; a: ReactNode }[] = [
     q: "Are there limits on buying?",
     a: (
       <>
-        Purchases are capped at {formatUsd(100_000)} per account per day, and we screen paying wallets against sanctions
+        Purchases are capped at {formatUsdDisplay(100_000)} per account per day, and we screen paying wallets against sanctions
         lists, as the law requires.
       </>
     ),
   },
 ];
 
+// One answer open at a time (the shared name), sliding open where supported.
 export function Faq() {
   return (
     <div className="divide-y divide-[var(--line)] rounded-2xl bg-[var(--surface)] ring-1 ring-white/5">
       {FAQ.map((item) => (
-        <details key={item.q} className="group px-4 sm:px-6">
-          <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 py-3 text-sm font-semibold text-[var(--ink)] sm:text-base [&::-webkit-details-marker]:hidden">
+        <details key={item.q} name="faq" className={cx("group px-4 sm:px-6", styles.faq)}>
+          <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 rounded-lg py-3 text-sm font-semibold text-[var(--ink)] outline-none transition-colors hover:text-white focus-visible:ring-2 focus-visible:ring-[var(--accent)] sm:text-base [&::-webkit-details-marker]:hidden">
             {item.q}
-            <ChevronRightIcon className="h-5 w-5 text-[var(--muted)] transition-transform group-open:rotate-90" />
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/5 text-[var(--muted)] transition group-open:rotate-90 group-open:bg-[var(--accent-soft)] group-open:text-[var(--accent)]">
+              <ChevronRightIcon className="h-4 w-4" />
+            </span>
           </summary>
           <div className="pb-5 pr-6 text-sm leading-6 text-[var(--muted)]">{item.a}</div>
         </details>

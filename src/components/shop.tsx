@@ -1,61 +1,143 @@
 "use client";
 
+import Image from "next/image";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useLane } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
 import { CameraIcon, ChatIcon, ChevronRightIcon, CoinIcon, MicIcon, PlayIcon } from "@/components/icons";
-import { CheckIcon, CostGrid, Faq, PaymentGuide, perCredit } from "@/components/premium/parts";
+import { BuyButton, isHeld } from "@/components/premium/buy";
+import styles from "@/components/premium/motion.module.css";
+import {
+  BEST_VALUE_ID,
+  CheckIcon,
+  CompareTable,
+  CostGrid,
+  Faq,
+  MEMBER_PERKS,
+  PaymentGuide,
+  TrustRow,
+  creditsBuy,
+  formatDate,
+  per100,
+} from "@/components/premium/parts";
 import { PremiumIcon } from "@/components/premium-icon";
-import { BuyButton, Checkout, isHeld } from "@/components/shop-pay";
-import { Badge, SectionTitle, buttonClass, cx } from "@/components/ui";
+import { Badge, SectionTitle, Skeleton, buttonClass, cx } from "@/components/ui";
 import { useApi } from "@/lib/api";
 import type { LedgerEntryDTO, OrderDTO } from "@/lib/api-types";
 import type { Lane } from "@/lib/characters";
-import {
-  COSTS,
-  MEMBER_DAILY_MESSAGE_CAP,
-  MEMBERSHIP,
-  PRODUCTS,
-  findProduct,
-  formatCredits,
-  formatUsd,
-  type Product,
-} from "@/lib/pricing";
+import { COSTS, MEMBERSHIP, PRODUCTS, findProduct, formatCredits, formatUsd, type Product } from "@/lib/pricing";
+
+// The checkout (wallet hooks and the QR code library) loads only when someone
+// presses Buy, not with every visit to the shop.
+const Checkout = dynamic(() => import("@/components/shop-pay").then((module) => module.Checkout), {
+  ssr: false,
+  loading: () => (
+    <div className={cx("fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm", styles.overlayIn)} role="status">
+      <span className="h-10 w-10 animate-spin rounded-full border-[3px] border-white/15 border-t-[var(--accent)] motion-reduce:animate-none" />
+      <span className="sr-only">Opening checkout…</span>
+    </div>
+  ),
+});
 
 type OnBuy = (product: Product) => void;
 
 const DAYS = MEMBERSHIP.memberDays ?? 30;
 
 // Tall pictures for the Premium hero, wide ones for the credits banner, in the
-// lane picked in the top bar.
+// lane picked in the top bar. Each banner is framed so the faces stay in view.
 const PORTRAIT: Record<Lane, string> = {
   girls: "/hero/hero-pair-girls.jpg",
   anime: "/hero/hero-pair-anime.jpg",
   guys: "/hero/hero-pair-guys.jpg",
 };
 
-const BANNER: Record<Lane, string> = {
-  girls: "/hero/hero-girls-lounge.jpg",
-  anime: "/hero/hero-anime-night.jpg",
-  guys: "/hero/hero-guys-rooftop.jpg",
+const BANNER: Record<Lane, { src: string; position: string }> = {
+  girls: { src: "/hero/hero-girls-lounge.jpg", position: "sm:object-[100%_14%]" },
+  anime: { src: "/hero/hero-anime-night.jpg", position: "sm:object-[100%_12%]" },
+  guys: { src: "/hero/hero-guys-rooftop.jpg", position: "sm:object-[100%_16%]" },
 };
+
+// Whether the viewer's account (membership, balance) is still on its way. Gives
+// up after a few seconds so a failed /api/me never hides the buy buttons.
+function useAccountLoading() {
+  const { ready, session, me } = useSession();
+  const waiting = !ready || (Boolean(session) && !me);
+  const [gaveUp, setGaveUp] = useState(false);
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = window.setTimeout(() => setGaveUp(true), 5000);
+    return () => window.clearTimeout(timer);
+  }, [waiting]);
+  return waiting && !gaveUp;
+}
 
 function useMemberUntil() {
   const { me } = useSession();
-  return me?.isMember && me.memberUntil ? new Date(me.memberUntil).toLocaleDateString() : null;
+  return me?.isMember && me.memberUntil ? formatDate(me.memberUntil) : null;
 }
 
-function BalanceChip() {
+// Hero art in the viewer's lane (the server already knows it from the lane
+// cookie), preloaded as the page's largest picture. A shimmer holds the space
+// until it has loaded, then it fades in.
+function LaneArt({
+  pick,
+  sizes,
+  className,
+}: {
+  pick: (lane: Lane) => { src: string; position?: string };
+  sizes: string;
+  className?: string;
+}) {
+  const { lane } = useLane();
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const art = pick(lane);
+  const loaded = loadedSrc === art.src;
+  return (
+    <>
+      <div
+        aria-hidden
+        className={cx(
+          "absolute inset-0 transition-opacity duration-500",
+          styles.shimmer,
+          loaded ? "opacity-0" : "opacity-100",
+        )}
+      />
+      <Image
+        key={art.src}
+        src={art.src}
+        alt=""
+        fill
+        sizes={sizes}
+        preload
+        onLoad={() => setLoadedSrc(art.src)}
+        className={cx(
+          "object-cover transition-opacity duration-500",
+          loaded ? "opacity-100" : "opacity-0",
+          art.position,
+          className,
+        )}
+      />
+    </>
+  );
+}
+
+function BalanceChip({ className }: { className?: string }) {
   const { me } = useSession();
+  const loading = useAccountLoading();
+  if (loading) return <Skeleton className={cx("h-10 w-36 rounded-full", className)} />;
   if (!me) return null;
   return (
     <a
       href="#activity"
-      className="inline-flex h-10 items-center gap-1.5 rounded-full bg-black/40 px-4 text-sm font-semibold !text-[var(--ink)] ring-1 ring-white/10 backdrop-blur hover:bg-black/60"
+      className={cx(
+        "inline-flex h-10 items-center gap-1.5 rounded-full bg-black/40 px-4 text-sm font-semibold !text-[var(--ink)] ring-1 ring-white/10 backdrop-blur transition-colors hover:bg-black/60",
+        className,
+      )}
     >
       <CoinIcon className="h-4 w-4 text-[var(--premium)]" />
-      {me.balance.toLocaleString("en-US")}
+      <span className="tabular-nums">{me.balance.toLocaleString("en-US")}</span>
       <span className="font-medium text-[var(--muted)]">credits</span>
     </a>
   );
@@ -87,20 +169,36 @@ function ShopTabs({ focus }: { focus: "membership" | "packs" }) {
 function PerkList({ className }: { className?: string }) {
   return (
     <ul className={cx("grid gap-3", className)}>
-      {MEMBERSHIP.perks.map((perk) => (
-        <li key={perk} className="flex gap-3 text-sm leading-5 text-[var(--ink)]">
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[var(--accent-ink)]">
+      {MEMBER_PERKS.map((perk) => (
+        <li key={perk.title} className="flex gap-3 text-sm leading-5 text-[var(--ink)]">
+          <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[var(--accent-ink)]">
             <CheckIcon className="h-3 w-3" />
           </span>
           <span>
-            {perk}
-            {/unlimited/i.test(perk) ? (
-              <span className="block text-xs text-[var(--muted)]">Fair use: up to {MEMBER_DAILY_MESSAGE_CAP} a day</span>
-            ) : null}
+            <span className="font-semibold">{perk.title}</span>
+            {perk.note ? <span className="block text-xs text-[var(--muted)]">{perk.note}</span> : null}
           </span>
         </li>
       ))}
     </ul>
+  );
+}
+
+// The membership buy button, or its shape while we find out whether the
+// viewer is already a member (the label depends on it).
+function MembershipButton({ onBuy, className }: { onBuy: OnBuy; className?: string }) {
+  const until = useMemberUntil();
+  const loading = useAccountLoading();
+  if (loading) return <Skeleton className={cx("h-12 w-full rounded-full", className)} />;
+  return (
+    <BuyButton
+      product={MEMBERSHIP}
+      variant="primary"
+      size="lg"
+      className={className}
+      label={until ? `Add ${DAYS} days` : `Join for ${formatUsd(MEMBERSHIP.usdCents)}`}
+      onBuy={onBuy}
+    />
   );
 }
 
@@ -114,8 +212,9 @@ const CREDIT_BUYS = [
   { key: "video", label: "video clips", icon: <PlayIcon className="h-4 w-4" /> },
 ] as const;
 
-function PlanCard({ onBuy }: { onBuy: OnBuy }) {
+function PlanCard({ onBuy, ctaRef }: { onBuy: OnBuy; ctaRef: RefObject<HTMLDivElement | null> }) {
   const until = useMemberUntil();
+  const loading = useAccountLoading();
   const perDay = formatUsd(Math.round(MEMBERSHIP.usdCents / DAYS));
   return (
     <div className="relative flex flex-col overflow-hidden rounded-3xl bg-[var(--surface)] p-5 ring-1 ring-[var(--accent)]/35 sm:p-8">
@@ -129,7 +228,11 @@ function PlanCard({ onBuy }: { onBuy: OnBuy }) {
         </span>
         <div className="min-w-0 flex-1">
           <h2 className="text-lg font-bold tracking-tight text-[var(--ink)]">Premium membership</h2>
-          <p className="text-xs text-[var(--muted)]">{until ? `You're a member until ${until}` : MEMBERSHIP.tag}</p>
+          {loading ? (
+            <Skeleton className="mt-1 h-3 w-40 rounded-full" />
+          ) : (
+            <p className="text-xs text-[var(--muted)]">{until ? `You're a member until ${until}` : `${DAYS} days, paid once`}</p>
+          )}
         </div>
         {until ? <Badge tone="premium">Active</Badge> : null}
       </div>
@@ -141,12 +244,10 @@ function PlanCard({ onBuy }: { onBuy: OnBuy }) {
       <p className="relative mt-1 text-sm text-[var(--muted)]">About {perDay} a day. Paid once, never renews.</p>
 
       {/* Phones show the button before the details so it is on the first screen. */}
-      <PerkList className="relative order-2 mt-6 sm:grid-cols-2 sm:gap-x-6 sm:gap-y-4 lg:order-none" />
+      <PerkList className="relative order-2 mt-6 sm:grid-cols-3 sm:gap-x-5 lg:order-none lg:grid-cols-1" />
 
       <div className="relative order-2 mt-6 rounded-2xl bg-black/25 p-4 ring-1 ring-white/5 lg:order-none">
-        <p className="text-xs font-medium text-[var(--muted)]">
-          {MEMBERSHIP.credits} credits are enough for up to
-        </p>
+        <p className="text-xs font-medium text-[var(--muted)]">{MEMBERSHIP.credits} credits are enough for up to</p>
         <ul className="mt-3 grid grid-cols-3 divide-x divide-[var(--line)] text-center">
           {CREDIT_BUYS.map((item, index) => (
             <li key={item.key} className="px-1">
@@ -163,24 +264,12 @@ function PlanCard({ onBuy }: { onBuy: OnBuy }) {
         </ul>
       </div>
 
-      <div className="relative order-1 mt-6 lg:order-none lg:mt-auto lg:pt-8">
-        <BuyButton
-          product={MEMBERSHIP}
-          variant="primary"
-          size="lg"
-          label={until ? `Add ${DAYS} days` : `Join for ${formatUsd(MEMBERSHIP.usdCents)}`}
-          onBuy={onBuy}
-        />
-        <p className="mt-3 flex flex-wrap justify-center gap-x-2 gap-y-1 text-xs text-[var(--muted)]">
-          <span>Pay with USDC or SOL</span>
-          <span aria-hidden>·</span>
-          <span>Credits never expire</span>
-          <span aria-hidden>·</span>
-          <span>No auto-renew</span>
-        </p>
+      <div ref={ctaRef} className="relative order-1 mt-6 lg:order-none lg:mt-auto lg:pt-8">
+        <MembershipButton onBuy={onBuy} />
+        <TrustRow className="mt-3" />
         <a
           href="#packs"
-          className="mt-4 flex min-h-10 items-center justify-center gap-1 text-sm font-semibold !text-[var(--ink)] hover:!text-[var(--accent)]"
+          className="mt-3 flex min-h-10 items-center justify-center gap-1 text-sm font-semibold !text-[var(--ink)] hover:!text-[var(--accent)]"
         >
           Just need credits? See credit packs
           <ChevronRightIcon className="h-4 w-4" />
@@ -197,15 +286,14 @@ const HIGHLIGHTS = [
   { label: "Video", icon: <PlayIcon className="h-4 w-4" /> },
 ];
 
-function PremiumHero({ onBuy }: { onBuy: OnBuy }) {
-  const { lane } = useLane();
+function PremiumHero({ onBuy, ctaRef }: { onBuy: OnBuy; ctaRef: RefObject<HTMLDivElement | null> }) {
   return (
     <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:gap-6">
       <div className="relative min-h-[15rem] overflow-hidden rounded-3xl bg-[var(--surface)] ring-1 ring-white/5 sm:min-h-[24rem] lg:min-h-[38rem]">
-        <img
-          src={PORTRAIT[lane]}
-          alt=""
-          className="absolute inset-0 h-full w-full object-cover object-[50%_20%]"
+        <LaneArt
+          pick={(lane) => ({ src: PORTRAIT[lane] })}
+          sizes="(min-width: 1024px) 45vw, 100vw"
+          className="object-[50%_20%]"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-black/0" aria-hidden />
         <div className="absolute inset-x-0 bottom-0 p-5 sm:p-8">
@@ -220,11 +308,11 @@ function PremiumHero({ onBuy }: { onBuy: OnBuy }) {
             Unlimited messages (fair use) and {MEMBERSHIP.credits} credits for photos, voice notes and video.{" "}
             {DAYS} days, paid once.
           </p>
-          <ul className="mt-4 hidden flex-wrap gap-2 sm:flex">
+          <ul className="mt-4 hidden max-w-sm grid-cols-2 gap-2 sm:grid">
             {HIGHLIGHTS.map((item) => (
               <li
                 key={item.label}
-                className="inline-flex h-9 items-center gap-1.5 rounded-full bg-black/45 px-3.5 text-sm font-medium text-white ring-1 ring-white/10 backdrop-blur"
+                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-black/45 px-3 text-xs font-semibold text-white ring-1 ring-white/10 backdrop-blur"
               >
                 <span className="text-[var(--accent)]">{item.icon}</span>
                 {item.label}
@@ -233,7 +321,7 @@ function PremiumHero({ onBuy }: { onBuy: OnBuy }) {
           </ul>
         </div>
       </div>
-      <PlanCard onBuy={onBuy} />
+      <PlanCard onBuy={onBuy} ctaRef={ctaRef} />
     </section>
   );
 }
@@ -247,7 +335,7 @@ function MembershipStrip({ onBuy }: { onBuy: OnBuy }) {
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(80%_120%_at_100%_0%,var(--accent-soft),transparent_65%)]"
         aria-hidden
       />
-      <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem] lg:items-center lg:gap-10">
+      <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-center lg:gap-10">
         <div>
           <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-[var(--premium)]">
             <PremiumIcon className="h-4 w-4" />
@@ -256,22 +344,15 @@ function MembershipStrip({ onBuy }: { onBuy: OnBuy }) {
           <h2 className="mt-3 text-2xl font-bold tracking-tight text-[var(--ink)] sm:text-3xl">
             <span className="text-[var(--accent)]">Unlimited</span> messages and {MEMBERSHIP.credits} credits
           </h2>
-          <PerkList className="mt-5 sm:grid-cols-2 sm:gap-x-6" />
+          <PerkList className="mt-5 sm:grid-cols-3 sm:gap-x-5" />
         </div>
         <div className="lg:text-center">
           <p className="text-4xl font-bold tracking-tight text-[var(--ink)]">
             {formatUsd(MEMBERSHIP.usdCents)}
             <span className="ml-1.5 text-sm font-medium text-[var(--muted)]">for {DAYS} days</span>
           </p>
-          <BuyButton
-            product={MEMBERSHIP}
-            variant="primary"
-            size="lg"
-            className="mt-4"
-            label={until ? `Add ${DAYS} days` : `Join for ${formatUsd(MEMBERSHIP.usdCents)}`}
-            onBuy={onBuy}
-          />
-          <p className="mt-2 text-xs text-[var(--muted)]">Pay with USDC or SOL.</p>
+          <MembershipButton onBuy={onBuy} className="mt-4" />
+          <TrustRow compact className="mt-3 lg:justify-center" />
         </div>
       </div>
     </section>
@@ -282,27 +363,27 @@ function MembershipStrip({ onBuy }: { onBuy: OnBuy }) {
 // Credit packs
 
 function PacksHero() {
-  const { lane } = useLane();
   return (
     <section className="relative overflow-hidden rounded-3xl bg-[var(--surface)] ring-1 ring-white/5">
-      <img
-        src={BANNER[lane]}
-        alt=""
-        className="absolute inset-0 h-full w-full object-cover object-[70%_30%] sm:object-right"
+      <LaneArt
+        pick={(lane) => BANNER[lane]}
+        sizes="(min-width: 1024px) calc(100vw - 18rem), 100vw"
+        className="object-[70%_25%]"
       />
       <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/50 to-black/10 sm:bg-gradient-to-r sm:from-black/95 sm:via-black/60 sm:to-transparent" aria-hidden />
-      <div className="relative flex min-h-[16rem] flex-col justify-end p-5 sm:min-h-[20rem] sm:justify-center sm:p-10">
+      <div className="relative flex min-h-[10rem] flex-col justify-end p-5 sm:min-h-[20rem] sm:justify-center sm:p-10">
         <Badge tone="premium" className="w-fit gap-1 px-2.5 py-1">
           <CoinIcon className="h-3 w-3" />
           Credits
         </Badge>
-        <h1 className="mt-3 text-4xl font-bold tracking-tight text-white sm:text-5xl">
+        <h1 className="mt-3 text-3xl font-bold tracking-tight text-white sm:text-5xl">
           Top up <span className="text-[var(--accent)]">credits</span>
         </h1>
-        <p className="mt-2 max-w-md text-sm leading-6 text-white/80 sm:text-base">
+        <p className="mt-2 hidden max-w-md text-sm leading-6 text-white/80 sm:block sm:text-base">
           For photos, voice notes, video, and messages past your free daily ones. Credits never expire.
         </p>
-        <div className="mt-4">
+        {/* Phones already show the balance in the top bar. */}
+        <div className="mt-4 hidden sm:block">
           <BalanceChip />
         </div>
       </div>
@@ -312,40 +393,46 @@ function PacksHero() {
 
 function PackCard({ product, onBuy }: { product: Product; onBuy: OnBuy }) {
   const featured = product.featured === true;
+  const best = product.id === BEST_VALUE_ID && !featured;
   return (
     <article
       className={cx(
-        "relative flex flex-col rounded-2xl bg-[var(--surface)] p-4 sm:p-5",
+        "relative flex flex-col rounded-2xl bg-[var(--surface)] p-4 transition duration-200 hover:-translate-y-0.5 sm:p-5",
         featured
-          ? "ring-2 ring-[var(--accent)] shadow-[0_18px_50px_-18px_rgba(255,79,139,0.6)]"
-          : "ring-1 ring-white/5",
+          ? "bg-[linear-gradient(180deg,var(--accent-soft),transparent_45%)] ring-2 ring-[var(--accent)] shadow-[0_18px_50px_-18px_rgba(255,79,139,0.6)]"
+          : "ring-1 ring-white/5 hover:ring-white/15",
       )}
     >
       {featured ? (
         <Badge className="absolute -top-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-1">Recommended</Badge>
+      ) : best ? (
+        <Badge tone="premium" className="absolute -top-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-1">
+          Lowest price per credit
+        </Badge>
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <h3 className="text-sm font-semibold text-[var(--muted)]">{product.name}</h3>
         {product.tag ? (
-          <span className="rounded-full bg-[var(--premium)]/15 px-2 py-0.5 text-[10px] font-bold text-[var(--premium)] sm:text-[11px]">
+          <span className="rounded-full bg-[var(--premium)]/15 px-2 py-0.5 text-[11px] font-bold text-[var(--premium)]">
             {product.tag}
           </span>
         ) : null}
       </div>
-      <p className="mt-3 flex items-center gap-1.5 text-2xl font-bold tracking-tight text-[var(--ink)] sm:text-3xl">
+      <p className="mt-3 flex items-center gap-1.5 text-2xl font-bold tracking-tight text-[var(--ink)] tabular-nums sm:text-3xl">
         <CoinIcon className="h-5 w-5 text-[var(--premium)] sm:h-6 sm:w-6" />
         {product.credits.toLocaleString("en-US")}
       </p>
       <p className="text-xs text-[var(--muted)]">credits, never expire</p>
+      <p className="mt-2 text-xs leading-5 text-[var(--ink)]/80">{creditsBuy(product.credits)}</p>
       <div className="mt-4 border-t border-[var(--line)] pt-4">
         <p className="text-xl font-bold tracking-tight text-[var(--ink)]">{formatUsd(product.usdCents)}</p>
-        <p className="text-xs text-[var(--muted)]">{perCredit(product)} per credit</p>
+        <p className="text-xs text-[var(--muted)]">{per100(product)} / 100 credits</p>
       </div>
       <div className="mt-auto pt-4">
         <BuyButton
           product={product}
           variant={featured ? "primary" : "secondary"}
-          label="Buy"
+          label={`Buy · ${formatUsd(product.usdCents)}`}
           aria-label={`Buy ${product.name}: ${formatCredits(product.credits)} for ${formatUsd(product.usdCents)}`}
           onBuy={onBuy}
         />
@@ -354,7 +441,7 @@ function PackCard({ product, onBuy }: { product: Product; onBuy: OnBuy }) {
   );
 }
 
-function PacksSection({ onBuy, focus }: { onBuy: OnBuy; focus: "membership" | "packs" }) {
+function PacksSection({ onBuy, focus, gridRef }: { onBuy: OnBuy; focus: "membership" | "packs"; gridRef?: RefObject<HTMLDivElement | null> }) {
   return (
     <section id="packs" className="scroll-mt-24">
       {focus === "packs" ? (
@@ -364,17 +451,81 @@ function PacksSection({ onBuy, focus }: { onBuy: OnBuy; focus: "membership" | "p
           packs
         </SectionTitle>
       )}
-      <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[var(--muted)]">
-        {focus === "packs"
-          ? "Bigger packs cost less per credit."
-          : "Credits pay for photos, voice notes, video, and messages past your free ones. Bigger packs cost less per credit."}
-      </p>
-      <div className="mt-7 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+      <div className="mt-1.5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <p className="max-w-2xl text-sm leading-6 text-[var(--muted)]">
+          {focus === "packs"
+            ? "Bigger packs cost less per credit."
+            : "Credits pay for photos, voice notes, video, and messages past your free ones. Bigger packs cost less per credit."}
+        </p>
+        <TrustRow compact className="justify-start" />
+      </div>
+      <div ref={gridRef} className="mt-6 grid grid-cols-2 gap-3 sm:mt-7 sm:gap-4 lg:grid-cols-4">
         {PRODUCTS.map((product) => (
           <PackCard key={product.id} product={product} onBuy={onBuy} />
         ))}
       </div>
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phones: a buy bar that appears once the main offer has scrolled out of view,
+// sitting just above the app's bottom bar.
+
+function useOutOfView(target: RefObject<HTMLElement | null>) {
+  const [out, setOut] = useState(false);
+  useEffect(() => {
+    const node = target.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(([entry]) => setOut(entry ? !entry.isIntersecting : false));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [target]);
+  return out;
+}
+
+function StickyBuyBar({
+  target,
+  product,
+  title,
+  detail,
+  label,
+  onBuy,
+}: {
+  target: RefObject<HTMLElement | null>;
+  product: Product;
+  title: string;
+  detail: string;
+  label: string;
+  onBuy: OnBuy;
+}) {
+  const out = useOutOfView(target);
+  const loading = useAccountLoading();
+  if (!out || loading) return null;
+  return (
+    <div className={cx("fixed inset-x-3 bottom-20 z-30 lg:hidden", styles.rise)}>
+      <div className="flex items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--bg-2)]/95 p-2 pl-4 shadow-[0_10px_30px_rgba(0,0,0,0.55)] backdrop-blur">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-bold text-[var(--ink)]">{title}</p>
+          <p className="truncate text-xs text-[var(--muted)]">{detail}</p>
+        </div>
+        <BuyButton product={product} variant="primary" size="md" className="!w-auto shrink-0 px-5" label={label} onBuy={onBuy} />
+      </div>
+    </div>
+  );
+}
+
+function MembershipBuyBar({ target, onBuy }: { target: RefObject<HTMLElement | null>; onBuy: OnBuy }) {
+  const until = useMemberUntil();
+  return (
+    <StickyBuyBar
+      target={target}
+      product={MEMBERSHIP}
+      title={`${formatUsd(MEMBERSHIP.usdCents)} for ${DAYS} days`}
+      detail={until ? `Member until ${until}` : "Unlimited messages · no auto-renew"}
+      label={until ? `Add ${DAYS} days` : "Join"}
+      onBuy={onBuy}
+    />
   );
 }
 
@@ -417,10 +568,57 @@ function orderTone(order: OrderDTO) {
   return "bg-red-500/10 !text-red-300";
 }
 
+function CopyIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={cx("shrink-0", className)} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="8.5" y="8.5" width="11" height="11" rx="2.5" />
+      <path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2" />
+    </svg>
+  );
+}
+
+// The short order number, with a button that copies the full one (support
+// asks for it when a refund is due).
+function OrderNumber({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="font-mono">#{id.slice(0, 8)}</span>
+      <button
+        type="button"
+        aria-label={copied ? "Order number copied" : "Copy order number"}
+        title={copied ? "Copied" : "Copy order number"}
+        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-white/5 hover:text-[var(--ink)]"
+        onClick={() => {
+          void navigator.clipboard
+            .writeText(id)
+            .then(() => {
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1500);
+            })
+            .catch(() => undefined);
+        }}
+      >
+        {copied ? <CheckIcon className="h-3.5 w-3.5 text-[var(--accent)]" /> : <CopyIcon className="h-3.5 w-3.5" />}
+      </button>
+    </span>
+  );
+}
+
 type Activity =
   | { state: "loading" }
   | { state: "error" }
   | { state: "ready"; balance: number; ledger: LedgerEntryDTO[]; orders: OrderDTO[] };
+
+function RowsSkeleton() {
+  return (
+    <div className="mt-3 space-y-2" aria-hidden>
+      <Skeleton className="h-11 rounded-xl" />
+      <Skeleton className="h-11 rounded-xl" />
+      <Skeleton className="h-11 rounded-xl" />
+    </div>
+  );
+}
 
 function ActivityPanel({ version }: { version: number }) {
   const api = useApi();
@@ -452,7 +650,7 @@ function ActivityPanel({ version }: { version: number }) {
       ? activity.orders.filter((order) => order.status !== "expired" || order.signature).slice(0, 5)
       : [];
   const ledger = activity.state === "ready" ? activity.ledger.slice(0, showAll ? 50 : 8) : [];
-  const balance = activity.state === "ready" ? activity.balance : (me?.balance ?? 0);
+  const balance = activity.state === "ready" ? activity.balance : me?.balance;
 
   return (
     <section id="activity" className="scroll-mt-24">
@@ -465,19 +663,32 @@ function ActivityPanel({ version }: { version: number }) {
             </span>
             <div>
               <p className="text-xs font-medium text-[var(--muted)]">Balance</p>
-              <p className="text-2xl font-bold tracking-tight text-[var(--ink)]">{formatCredits(balance)}</p>
+              {balance === undefined ? (
+                <Skeleton className="mt-1 h-7 w-32 rounded-lg" />
+              ) : (
+                <p className="text-2xl font-bold tracking-tight text-[var(--ink)] tabular-nums">{formatCredits(balance)}</p>
+              )}
             </div>
           </div>
           {me?.isMember && me.memberUntil ? (
             <span className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[var(--premium)]/10 px-3.5 text-sm font-semibold text-[var(--premium)]">
               <PremiumIcon className="h-4 w-4" />
-              Member until {new Date(me.memberUntil).toLocaleDateString()}
+              Member until {formatDate(me.memberUntil)}
             </span>
           ) : null}
         </div>
 
         {activity.state === "loading" ? (
-          <p className="mt-5 text-sm text-[var(--muted)]">Loading your activity…</p>
+          <div className="mt-6 grid gap-6 lg:grid-cols-2 lg:gap-10" role="status" aria-label="Loading your activity">
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Recent payments</h3>
+              <RowsSkeleton />
+            </div>
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">History</h3>
+              <RowsSkeleton />
+            </div>
+          </div>
         ) : null}
         {activity.state === "error" ? (
           <div className="mt-5 flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
@@ -489,18 +700,23 @@ function ActivityPanel({ version }: { version: number }) {
         ) : null}
 
         {activity.state === "ready" ? (
-          <div className={cx("mt-6 grid gap-6", payments.length ? "lg:grid-cols-2 lg:gap-10" : null)}>
+          <div className={cx("mt-6 grid gap-6", payments.length ? "lg:grid-cols-2 lg:gap-10" : null, styles.fade)}>
             {payments.length ? (
               <div>
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Recent payments</h3>
                 <ul className="mt-2 divide-y divide-[var(--line)]">
                   {payments.map((order) => (
-                    <li key={order.id} className="flex items-center justify-between gap-3 py-3 text-sm">
+                    <li key={order.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
                       <div className="min-w-0">
                         <p className="truncate font-medium text-[var(--ink)]">
                           {findProduct(order.productId)?.name ?? order.productId} · {order.amountDisplay}
                         </p>
-                        <p className="truncate font-mono text-[11px] text-[var(--muted)]">{order.id}</p>
+                        {/* The order's hold ends 15 minutes after it starts, so its date is the day it ran. */}
+                        <p className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+                          {formatDate(order.expiresAt)}
+                          <span aria-hidden>·</span>
+                          <OrderNumber id={order.id} />
+                        </p>
                       </div>
                       {order.signature && !order.signature.startsWith("dev-") ? (
                         <a
@@ -534,12 +750,10 @@ function ActivityPanel({ version }: { version: number }) {
               {ledger.length ? (
                 <ul className="mt-2 divide-y divide-[var(--line)]">
                   {ledger.map((entry) => (
-                    <li key={entry.id} className="flex items-center justify-between gap-3 py-3 text-sm">
+                    <li key={entry.id} className="flex min-h-11 items-center justify-between gap-3 py-2.5 text-sm">
                       <span className="min-w-0 text-[var(--ink)]">
                         {REASONS[entry.reason] ?? entry.reason}
-                        <span className="ml-2 text-xs text-[var(--muted)]">
-                          {new Date(entry.createdAt).toLocaleDateString()}
-                        </span>
+                        <span className="ml-2 text-xs text-[var(--muted)]">{formatDate(entry.createdAt)}</span>
                       </span>
                       <span
                         className={cx(
@@ -575,25 +789,39 @@ export function Shop({ focus = "membership" }: { focus?: "membership" | "packs" 
   const { session } = useSession();
   const [buying, setBuying] = useState<Product | null>(null);
   const [version, setVersion] = useState(0);
+  const planCta = useRef<HTMLDivElement>(null);
+  const packGrid = useRef<HTMLDivElement>(null);
   const onBuy = useCallback((product: Product) => setBuying(product), []);
   const closeCheckout = useCallback(() => {
     setBuying(null);
     setVersion((value) => value + 1);
   }, []);
+  const featured = PRODUCTS.find((product) => product.featured) ?? PRODUCTS[0];
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] px-4 pb-12 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8">
+    <div className="mx-auto w-full max-w-[1600px] px-4 pb-32 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pb-12 lg:pt-8">
       <ShopTabs focus={focus} />
-      <div className="mt-5 space-y-14 sm:mt-6 sm:space-y-16">
+      <div className="mt-4 space-y-12 sm:mt-6 sm:space-y-16">
         {focus === "packs" ? (
           <>
             <PacksHero />
-            <PacksSection focus={focus} onBuy={onBuy} />
+            <PacksSection focus={focus} onBuy={onBuy} gridRef={packGrid} />
             <MembershipStrip onBuy={onBuy} />
           </>
         ) : (
           <>
-            <PremiumHero onBuy={onBuy} />
+            <PremiumHero onBuy={onBuy} ctaRef={planCta} />
+            <section>
+              <SectionTitle accent="Free" action={null}>
+                or member
+              </SectionTitle>
+              <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[var(--muted)]">
+                Everything else is the same for everyone: the same characters, memory and replies.
+              </p>
+              <div className="mt-6">
+                <CompareTable />
+              </div>
+            </section>
             <PacksSection focus={focus} onBuy={onBuy} />
           </>
         )}
@@ -634,6 +862,18 @@ export function Shop({ focus = "membership" }: { focus?: "membership" | "packs" 
           <Faq />
         </section>
       </div>
+      {buying ? null : focus === "packs" ? (
+        <StickyBuyBar
+          target={packGrid}
+          product={featured}
+          title={`${featured.name} · ${formatCredits(featured.credits)}`}
+          detail={`${formatUsd(featured.usdCents)} · ${per100(featured)} / 100 credits`}
+          label="Buy"
+          onBuy={onBuy}
+        />
+      ) : (
+        <MembershipBuyBar target={planCta} onBuy={onBuy} />
+      )}
       {buying ? <Checkout product={buying} onClose={closeCheckout} /> : null}
     </div>
   );

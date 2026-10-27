@@ -98,8 +98,8 @@ export default function VerifyPage() {
   let card: ReactNode;
   if (suspended) {
     card = (
-      <Panel className="p-6">
-        <p className="text-sm text-[var(--muted)]">This account is suspended, so it can&apos;t start an age check.</p>
+      <Panel className="p-5 sm:p-6">
+        <p className="text-sm leading-6 text-[var(--muted)]">This account is suspended, so it can&apos;t start an age check.</p>
       </Panel>
     );
   } else if (!ready || !features || (session && !me)) {
@@ -125,7 +125,7 @@ export default function VerifyPage() {
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-              <h2 className="text-xl font-bold tracking-tight text-[var(--ink)]">One-time ID check</h2>
+              <h2 className="text-lg font-bold tracking-tight text-[var(--ink)]">One-time ID check</h2>
               <p>
                 <span className="sr-only">Your status: </span>
                 <AgeStatusBadge status={me.ageStatus} label={status?.label} />
@@ -155,8 +155,8 @@ export default function VerifyPage() {
                     : "Start verification"}
             </Button>
           ) : mode === "dev" ? (
-            <div className="rounded-2xl border border-dashed border-[var(--premium)]/50 bg-[var(--premium)]/5 p-4">
-              <p className="text-sm font-semibold text-[var(--premium)]">Development mode: Veriff isn&apos;t configured.</p>
+            <div className="rounded-2xl border border-dashed border-[var(--line)] bg-[var(--bg)]/40 p-4">
+              <p className="text-sm font-semibold text-[var(--ink)]">Development mode: Veriff isn&apos;t configured.</p>
               <div className="mt-3 flex flex-wrap gap-3">
                 <Button disabled={busy} onClick={() => devOutcome("approved")}>
                   Approve (dev)
@@ -210,20 +210,20 @@ export default function VerifyPage() {
                     <li
                       key={step}
                       className={cx(
-                        "rounded-2xl border p-5",
+                        "flex items-start gap-3 rounded-2xl border p-4 sm:block sm:p-5",
                         done ? "border-emerald-400/30 bg-emerald-400/[0.04]" : "border-[var(--line)] bg-[var(--surface)]",
                       )}
                     >
                       <span
                         aria-hidden
                         className={cx(
-                          "flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold",
+                          "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold",
                           done ? "bg-emerald-400/15 text-emerald-300" : "bg-[var(--accent-soft)] text-[var(--accent)]",
                         )}
                       >
                         {done ? <CheckIcon className="h-4 w-4" /> : index + 1}
                       </span>
-                      <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{step}</p>
+                      <p className="mt-0 pt-1.5 text-sm leading-6 text-[var(--ink)] sm:mt-3 sm:pt-0">{step}</p>
                       {done ? <span className="sr-only">(done)</span> : null}
                     </li>
                   );

@@ -1,12 +1,13 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
 import { CameraIcon, ChatIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, GalleryIcon, PlayIcon } from "@/components/icons";
-import { Button, ButtonLink, Chip, EmptyState, PageHeader, cx } from "@/components/ui";
-import { GridSkeleton } from "@/components/home/browse";
-import { PAGE, useCatalogue } from "@/components/home/catalogue";
+import { Button, ButtonLink, Chip, EmptyState, PageHeader, cx, isStaticArt } from "@/components/ui";
+import { FOCUS_RING, GridSkeleton, ScrollRow } from "@/components/home/browse";
+import { PAGE, PAGE_STACK, useCatalogue } from "@/components/home/catalogue";
 import { LoginPrompt, RetryPanel } from "@/components/home/login-prompt";
 import { ApiError, useApi } from "@/lib/api";
 import type { Character } from "@/lib/characters";
@@ -29,6 +30,14 @@ const EMPTY: Record<Kind, { title: string; body: string }> = {
   video: { title: "No videos yet", body: "Animate a photo in a chat and the video will be saved here." },
 };
 
+function DownloadIcon({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={`shrink-0 ${className}`} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14" />
+    </svg>
+  );
+}
+
 const PAGE_SIZE = 36;
 const GALLERY = "grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6";
 
@@ -42,27 +51,59 @@ function describe(item: CollectionMediaDTO, person: Character | undefined) {
   return `${item.kind === "video" ? "Video" : "Photo"} from ${person?.name ?? "a removed character"}, ${formatDate(item.createdAt)}`;
 }
 
+// Portraits are our own art, so they come resized (a 40px circle never
+// downloads the full picture).
 function Avatar({ person, className }: { person: Character | undefined; className?: string }) {
   return (
-    <span className={cx("shrink-0 overflow-hidden rounded-full ring-1 ring-white/20", className)} style={{ background: person?.color ?? "#24242b" }}>
-      {person?.image ? <img src={person.image} alt="" className="h-full w-full object-cover object-top" /> : null}
+    <span
+      className={cx("relative shrink-0 overflow-hidden rounded-full ring-1 ring-white/20", className)}
+      style={{ background: person?.color ?? "#24242b" }}
+    >
+      {person?.image ? (
+        <Image src={person.image} alt="" fill sizes="40px" unoptimized={!isStaticArt(person.image)} className="object-cover object-top" />
+      ) : null}
     </span>
   );
 }
 
-function Tile({ item, person, onOpen }: { item: CollectionMediaDTO; person: Character | undefined; onOpen: (target: HTMLButtonElement) => void }) {
+function Tile({
+  item,
+  person,
+  eager,
+  onOpen,
+}: {
+  item: CollectionMediaDTO;
+  person: Character | undefined;
+  // In the first rows, on screen at first paint.
+  eager?: boolean;
+  onOpen: (target: HTMLButtonElement) => void;
+}) {
   return (
     <button
       type="button"
       aria-label={describe(item, person)}
       onClick={(event) => onOpen(event.currentTarget)}
-      className="group relative block aspect-[3/4] w-full overflow-hidden rounded-2xl bg-[var(--surface)] ring-1 ring-white/5 transition hover:ring-[var(--accent)]/60"
+      className={cx(
+        "group relative block aspect-[3/4] w-full overflow-hidden rounded-2xl bg-[var(--surface)] ring-1 ring-white/5 transition-[transform,box-shadow] duration-300 hover:-translate-y-1 hover:shadow-[0_18px_40px_-12px_rgba(0,0,0,0.8)] hover:ring-[var(--accent)]/60 motion-reduce:transition-none motion-reduce:hover:translate-y-0",
+        "outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
+      )}
+      style={{ background: person?.color }}
     >
       {item.url ? (
         item.kind === "video" ? (
           <video src={`${item.url}#t=0.1`} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
         ) : (
-          <img src={item.url} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover transition duration-500 group-hover:scale-[1.04]" />
+          // Generated media needs the viewer's login, which the image optimizer
+          // doesn't have, so it is shown as stored.
+          <Image
+            src={item.url}
+            alt=""
+            fill
+            unoptimized
+            loading={eager ? "eager" : "lazy"}
+            sizes="(min-width: 1280px) 20vw, (min-width: 640px) 33vw, 50vw"
+            className="object-cover transition duration-500 group-hover:scale-[1.04] motion-reduce:transition-none"
+          />
         )
       ) : null}
       {item.kind === "video" ? (
@@ -128,7 +169,7 @@ function Lightbox({
       role="dialog"
       aria-modal="true"
       aria-label={label}
-      className="fixed inset-0 z-50 flex flex-col bg-black"
+      className="fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-sm transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none"
       onTouchStart={(event) => {
         touchX.current = event.touches[0]?.clientX ?? null;
       }}
@@ -150,12 +191,25 @@ function Lightbox({
             {item.kind === "video" ? "Video" : "Photo"} · {formatDate(item.createdAt)} · {index + 1} of {count}
           </p>
         </div>
+        {item.url ? (
+          <a
+            href={item.url}
+            download
+            aria-label={`Download this ${item.kind === "video" ? "video" : "photo"}`}
+            className="ml-auto flex h-11 w-11 items-center justify-center rounded-full text-white hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
+          >
+            <DownloadIcon />
+          </a>
+        ) : null}
         <button
           ref={close}
           type="button"
           aria-label="Close"
           onClick={onClose}
-          className="ml-auto flex h-11 w-11 items-center justify-center rounded-full text-white hover:bg-white/10"
+          className={cx(
+            "flex h-11 w-11 items-center justify-center rounded-full text-white hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none",
+            !item.url && "ml-auto",
+          )}
         >
           <CloseIcon />
         </button>
@@ -164,9 +218,24 @@ function Lightbox({
       <div className="relative flex min-h-0 flex-1 items-center justify-center px-4 sm:px-20">
         {item.url ? (
           item.kind === "video" ? (
-            <video key={item.id} src={item.url} controls autoPlay playsInline loop className="max-h-full max-w-full rounded-xl" />
+            <video
+              key={item.id}
+              src={item.url}
+              controls
+              autoPlay
+              playsInline
+              loop
+              className="max-h-full max-w-full rounded-xl transition-[opacity,transform] duration-300 ease-out starting:scale-[0.97] starting:opacity-0 motion-reduce:transition-none"
+            />
           ) : (
-            <img key={item.id} src={item.url} alt={label} className="max-h-full max-w-full rounded-xl object-contain" />
+            // Natural size up to the screen; generated media isn't optimised.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={item.id}
+              src={item.url}
+              alt={label}
+              className="max-h-full max-w-full rounded-xl object-contain transition-[opacity,transform] duration-300 ease-out starting:scale-[0.97] starting:opacity-0 motion-reduce:transition-none"
+            />
           )
         ) : null}
         {index > 0 ? (
@@ -216,8 +285,13 @@ function Collection() {
   const sessionKey = session?.detail ?? null;
 
   const [kind, setKind] = useState<Kind>("all");
+  // Narrow to one character's photos and videos (null: everyone).
+  const [who, setWho] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
+  // Photo and video counts, known once the whole collection has loaded under
+  // "All" (the API pages, so a partial list can't count). Kept per session.
+  const [counts, setCounts] = useState<{ key: string; image: number; video: number } | null>(null);
   const [more, setMore] = useState<{ busy: boolean; error?: string }>({ busy: false });
   const [open, setOpen] = useState<number | null>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
@@ -230,7 +304,12 @@ function Collection() {
     void (async () => {
       try {
         const page = await api<CollectionResponse>(query(kind));
-        if (!cancelled) setLoaded({ key, items: page.media, hasMore: page.hasMore });
+        if (cancelled) return;
+        setLoaded({ key, items: page.media, hasMore: page.hasMore });
+        if (kind === "all" && !page.hasMore) {
+          const image = page.media.filter((item) => item.kind === "image").length;
+          setCounts({ key: sessionKey, image, video: page.media.length - image });
+        }
       } catch (error) {
         if (!cancelled) setLoaded({ key, items: [], hasMore: false, error: messageOf(error, "Couldn't load your collection. Check your connection.") });
       }
@@ -241,7 +320,19 @@ function Collection() {
   }, [api, sessionKey, kind, key]);
 
   const current = loaded && loaded.key === key ? loaded : null;
-  const items = current?.items ?? [];
+  const loadedItems = useMemo(() => current?.items ?? [], [current]);
+  // The characters in what's loaded, most recent first, for the filter row.
+  const everyone = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const item of loadedItems) {
+      if (item.characterId) seen.set(item.characterId, (seen.get(item.characterId) ?? 0) + 1);
+    }
+    return [...seen.entries()].map(([id, count]) => ({ id, count, person: people.get(id) }));
+  }, [loadedItems, people]);
+  const shownWho = who && everyone.some((entry) => entry.id === who) ? who : null;
+  const items = shownWho ? loadedItems.filter((item) => item.characterId === shownWho) : loadedItems;
+  const known = counts && counts.key === sessionKey ? counts : null;
+  const countOf = (id: Kind) => (known ? (id === "all" ? known.image + known.video : known[id]) : null);
 
   const loadMore = useCallback(async () => {
     if (!current || !current.hasMore || more.busy) return;
@@ -320,6 +411,7 @@ function Collection() {
             <li key={item.id}>
               <Tile
                 item={item}
+                eager={index < 6}
                 person={item.characterId ? people.get(item.characterId) : undefined}
                 onOpen={(target) => {
                   opener.current = target;
@@ -343,28 +435,63 @@ function Collection() {
   }
 
   return (
-    <div className={`${PAGE} flex flex-col gap-5 pb-10 pt-6 sm:pt-8`}>
+    <div className={cx(PAGE, PAGE_STACK)}>
       <PageHeader
         accent="My"
         title="Collection"
         subtitle="Every photo and video you've received in your chats. Only you can see them."
       />
       {session ? (
-        <div className="flex gap-2" role="group" aria-label="Show">
-          {FILTERS.map((filter) => (
-            <Chip
-              key={filter.id}
-              active={kind === filter.id}
-              onClick={() => {
-                setKind(filter.id);
-                setMore({ busy: false });
-                setOpen(null);
-              }}
-            >
-              {filter.icon}
-              {filter.label}
-            </Chip>
-          ))}
+        <div className="-mb-2 flex flex-col gap-3 sm:-mb-3">
+          <div className="flex gap-2" role="group" aria-label="Show">
+            {FILTERS.map((filter) => {
+              const count = countOf(filter.id);
+              return (
+                <Chip
+                  key={filter.id}
+                  active={kind === filter.id}
+                  className={FOCUS_RING}
+                  onClick={() => {
+                    setKind(filter.id);
+                    setMore({ busy: false });
+                    setOpen(null);
+                  }}
+                >
+                  {filter.icon}
+                  {filter.label}
+                  {count !== null ? (
+                    <span className={cx("text-xs font-semibold", kind === filter.id ? "text-white/80" : "text-[var(--muted)]")}>{count}</span>
+                  ) : null}
+                </Chip>
+              );
+            })}
+          </div>
+          {everyone.length > 1 ? (
+            <ScrollRow label="Show one character" watch={everyone.length}>
+              <Chip active={!shownWho} onClick={() => setWho(null)} className={cx("snap-start", FOCUS_RING)}>
+                Everyone
+              </Chip>
+              {everyone.map((entry) => (
+                <Chip
+                  key={entry.id}
+                  active={shownWho === entry.id}
+                  onClick={() => {
+                    setWho(shownWho === entry.id ? null : entry.id);
+                    setOpen(null);
+                  }}
+                  className={cx("snap-start pl-1.5", FOCUS_RING)}
+                >
+                  <Avatar person={entry.person} className="h-7 w-7" />
+                  {entry.person?.name ?? "Removed"}
+                  {current && !current.hasMore ? (
+                    <span className={cx("text-xs font-semibold", shownWho === entry.id ? "text-white/80" : "text-[var(--muted)]")}>
+                      {entry.count}
+                    </span>
+                  ) : null}
+                </Chip>
+              ))}
+            </ScrollRow>
+          ) : null}
         </div>
       ) : null}
       {body}

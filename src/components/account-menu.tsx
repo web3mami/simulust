@@ -3,8 +3,19 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSession } from "@/components/auth-gate";
-import { AdminIcon, CoinIcon, SettingsIcon, ShieldIcon, SignOutIcon, UserIcon } from "@/components/icons";
-import { buttonClass } from "@/components/ui";
+import {
+  AdminIcon,
+  CoinIcon,
+  GalleryIcon,
+  HeartIcon,
+  SettingsIcon,
+  ShieldIcon,
+  SignOutIcon,
+  UserIcon,
+} from "@/components/icons";
+import { preloadLoginArt } from "@/components/login-screen";
+import { PremiumIcon } from "@/components/premium-icon";
+import { cx } from "@/components/ui";
 import type { AgeStatus } from "@/lib/api-types";
 
 const AGE_LABEL: Record<AgeStatus, string> = {
@@ -14,33 +25,103 @@ const AGE_LABEL: Record<AgeStatus, string> = {
   none: "Age not verified",
 };
 
-export function AccountMenu() {
-  const { session, me, signOut, openLogin, openSignup } = useSession();
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
+// The filled avatar used for the signed-in person everywhere (top bar, menu,
+// profile), so it always reads as the same person.
+export const AVATAR_FILL =
+  "bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] font-bold text-white ring-2 ring-white/10";
+
+// Dropdown behaviour shared by the account menu and the phone lane menu:
+// focus moves into the menu, arrows walk its items, Escape closes it and
+// returns focus to the button, and a tap outside closes it.
+export function useMenu(open: boolean, setOpen: (open: boolean) => void) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    function onPointer(event: MouseEvent) {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    }
+    if (!open) return;
+    const items = () => Array.from(panel.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? []);
+    const first = items();
+    const start =
+      first.find((item) => item.getAttribute("aria-checked") === "true") ??
+      first.find((item) => item.hasAttribute("data-menu-start")) ??
+      first[0];
+    start?.focus({ preventScroll: true });
+
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      const list = items();
+      const index = list.indexOf(document.activeElement as HTMLElement);
+      const move = (next: number) => {
+        event.preventDefault();
+        list[(next + list.length) % list.length]?.focus();
+      };
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+        trigger.current?.focus();
+      } else if (event.key === "ArrowDown") move(index + 1);
+      else if (event.key === "ArrowUp") move(index < 0 ? -1 : index - 1);
+      else if (event.key === "Home") move(0);
+      else if (event.key === "End") move(-1);
+      else if (event.key === "Tab") setOpen(false);
     }
-    document.addEventListener("mousedown", onPointer);
+    function onPointer(event: PointerEvent) {
+      const target = event.target as Node;
+      if (!panel.current?.contains(target) && !trigger.current?.contains(target)) setOpen(false);
+    }
     document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
     return () => {
-      document.removeEventListener("mousedown", onPointer);
       document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
     };
-  }, []);
+  }, [open, setOpen]);
+
+  return { trigger, panel };
+}
+
+// Log in / Join in the top bar. Written out rather than via buttonClass so
+// the 36px height and tighter phone padding don't fight its size presets.
+const SIGNED_OUT_BUTTON =
+  "inline-flex h-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-[background-color,color,transform] duration-150 active:scale-[0.97] motion-reduce:active:scale-100";
+
+export function AccountMenu({ lane }: { lane?: string }) {
+  const { ready, session, me, signOut, openLogin, openSignup } = useSession();
+  const [open, setOpen] = useState(false);
+  const { trigger, panel } = useMenu(open, setOpen);
+
+  // Until the login provider knows who this is, hold the avatar's place:
+  // signed-in people shouldn't see "Log in" flash first.
+  if (!ready) {
+    return <span aria-hidden className="block h-10 w-10 animate-pulse rounded-full bg-[var(--surface-2)] motion-reduce:animate-none" />;
+  }
 
   if (!session) {
+    // Fetch the sign-up art as soon as someone shows intent, so the modal opens complete.
+    const warm = () => preloadLoginArt(lane);
     return (
-      <div className="flex items-center gap-2">
-        <button type="button" className={buttonClass("secondary", "md", "h-9")} onClick={openLogin}>
+      <div className="flex items-center gap-1.5 sm:gap-2">
+        <button
+          type="button"
+          className={cx(
+            SIGNED_OUT_BUTTON,
+            "px-3 text-[var(--ink)] hover:bg-white/[0.06] sm:border sm:border-[var(--line)] sm:bg-[var(--surface)] sm:px-4 sm:hover:bg-[var(--surface-2)]",
+          )}
+          onPointerEnter={warm}
+          onFocus={warm}
+          onClick={openLogin}
+        >
           Log in
         </button>
-        <button type="button" className={buttonClass("primary", "md", "h-9")} onClick={openSignup}>
+        <button
+          type="button"
+          className={cx(
+            SIGNED_OUT_BUTTON,
+            "bg-[var(--accent)] px-3.5 text-[var(--accent-ink)] shadow-[0_6px_18px_rgba(255,79,139,0.3)] hover:bg-[var(--accent-2)] sm:px-4",
+          )}
+          onPointerEnter={warm}
+          onFocus={warm}
+          onClick={openSignup}
+        >
           <span className="sm:hidden">Join free</span>
           <span className="hidden sm:inline">Create free account</span>
         </button>
@@ -49,68 +130,105 @@ export function AccountMenu() {
   }
 
   const label = me?.displayName && me.displayName !== "You" ? me.displayName : session.display;
-  const initial = label.trim().charAt(0).toUpperCase() || "U";
+  // The initial waits for the account so it never switches letters mid-load.
+  const initial = me ? label.trim().charAt(0).toUpperCase() || "U" : "";
   const close = () => setOpen(false);
 
   return (
-    <div ref={root} className="relative">
+    <div className="relative">
       <button
+        ref={trigger}
         type="button"
         aria-label="Account menu"
+        aria-haspopup="menu"
         aria-expanded={open}
-        className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[var(--accent-soft)] text-sm font-bold text-[var(--accent)] ring-2 ring-[var(--accent)]/60"
-        onClick={() => setOpen((value) => !value)}
+        aria-controls={open ? "account-menu" : undefined}
+        className={cx(
+          "flex h-10 w-10 items-center justify-center overflow-hidden rounded-full text-sm transition-transform duration-150 active:scale-95 motion-reduce:active:scale-100",
+          AVATAR_FILL,
+          !me && "animate-pulse motion-reduce:animate-none",
+        )}
+        onClick={() => setOpen(!open)}
       >
         {initial}
       </button>
       {open ? (
-        <div className="absolute right-0 z-50 mt-2 w-64 overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--bg-2)] py-2 shadow-[0_16px_40px_rgba(0,0,0,0.55)]">
-          <div className="border-b border-[var(--line)] px-4 pb-3 pt-1">
-            <p className="truncate text-sm font-medium text-[var(--ink)]">{label}</p>
-            {me ? (
-              <>
-                <p className="mt-1 text-xs text-[var(--muted)]">
-                  <span className="font-semibold text-[var(--premium)]">{me.balance.toLocaleString()}</span> credits
-                  {me.isMember ? " · Member" : ""}
+        <div
+          ref={panel}
+          id="account-menu"
+          role="menu"
+          aria-label="Account"
+          className="animate-menu-in absolute right-0 z-50 mt-2 w-[min(18rem,calc(100vw-1rem))] origin-top-right overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--bg-2)] shadow-[0_20px_50px_rgba(0,0,0,0.6)]"
+        >
+          <div className="flex items-center gap-3 px-4 pb-3 pt-4">
+            <span aria-hidden className={cx("flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base", AVATAR_FILL)}>
+              {initial}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-[var(--ink)]">{label}</p>
+              {me ? (
+                <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--muted)]">
+                  {me.isMember ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-[var(--premium)] to-[var(--premium-2)] px-2 py-0.5 font-bold text-[#1a1206]">
+                      <PremiumIcon className="h-3 w-3" />
+                      Premium
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-white/[0.08] px-2 py-0.5 font-semibold text-[var(--ink)]">Free</span>
+                  )}
+                  <span className="inline-flex items-center gap-1">
+                    <span
+                      aria-hidden
+                      className={cx("h-1.5 w-1.5 rounded-full", me.ageVerified ? "bg-emerald-400" : "bg-[var(--accent)]")}
+                    />
+                    {AGE_LABEL[me.ageStatus]}
+                  </span>
                 </p>
-                <Link
-                  href="/verify"
-                  onClick={close}
-                  className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] ${
-                    me.ageVerified ? "bg-white/10 text-[var(--ink)]" : "border border-[var(--accent)]/50 text-[var(--accent)]"
-                  }`}
-                >
-                  <span
-                    aria-hidden
-                    className={`h-1.5 w-1.5 rounded-full ${me.ageVerified ? "bg-emerald-400" : "bg-[var(--accent)]"}`}
-                  />
-                  {AGE_LABEL[me.ageStatus]}
-                </Link>
-              </>
-            ) : (
-              <p className="mt-1 text-xs text-[var(--muted)]">Loading your account…</p>
-            )}
+              ) : (
+                <p className="mt-1 text-xs text-[var(--muted)]">Loading your account…</p>
+              )}
+            </div>
           </div>
-          <MenuRow href="/profile" onClick={close} label="Profile" icon={<UserIcon />} />
-          <MenuRow href="/settings" onClick={close} label="Settings" icon={<SettingsIcon />} />
-          {me && !me.ageVerified ? (
-            <MenuRow href="/verify" onClick={close} label="Verify age" icon={<ShieldIcon />} />
+
+          {me ? (
+            <div className="mx-3 mb-2 flex items-center gap-3 rounded-xl bg-[var(--surface)] py-2 pl-3 pr-2">
+              <CoinIcon className="h-5 w-5 text-[var(--premium)]" />
+              <p className="min-w-0 flex-1 text-sm text-[var(--muted)]">
+                <span className="font-bold tabular-nums text-[var(--ink)]">{me.balance.toLocaleString()}</span> credits
+              </p>
+              <Link
+                href="/packs"
+                role="menuitem"
+                onClick={close}
+                className="inline-flex h-8 items-center rounded-full bg-gradient-to-r from-[var(--premium)] to-[var(--premium-2)] px-3.5 text-xs font-bold !text-[#1a1206] transition-[filter,transform] hover:brightness-110 active:scale-95 motion-reduce:active:scale-100"
+              >
+                Buy
+              </Link>
+            </div>
           ) : null}
-          <MenuRow
-            href="/premium"
-            onClick={close}
-            label="Credits"
-            icon={<CoinIcon className="h-5 w-5 text-[var(--premium)]" />}
-          />
-          {me?.isAdmin ? <MenuRow href="/admin" onClick={close} label="Admin" icon={<AdminIcon />} /> : null}
-          <MenuRow
-            label="Sign out"
-            icon={<SignOutIcon />}
-            onClick={() => {
-              close();
-              signOut();
-            }}
-          />
+
+          <div className="border-t border-[var(--line)] py-1.5">
+            <MenuRow href="/my-ai" onClick={close} label="My AI" icon={<HeartIcon />} start />
+            <MenuRow href="/collection" onClick={close} label="Collection" icon={<GalleryIcon />} />
+          </div>
+          <div className="border-t border-[var(--line)] py-1.5">
+            <MenuRow href="/profile" onClick={close} label="Profile" icon={<UserIcon />} />
+            <MenuRow href="/settings" onClick={close} label="Settings" icon={<SettingsIcon />} />
+            {me && !me.ageVerified ? (
+              <MenuRow href="/verify" onClick={close} label="Verify age" icon={<ShieldIcon />} accent />
+            ) : null}
+            {me?.isAdmin ? <MenuRow href="/admin" onClick={close} label="Admin" icon={<AdminIcon />} /> : null}
+          </div>
+          <div className="border-t border-[var(--line)] py-1.5">
+            <MenuRow
+              label="Log out"
+              icon={<SignOutIcon />}
+              onClick={() => {
+                close();
+                signOut();
+              }}
+            />
+          </div>
         </div>
       ) : null}
     </div>
@@ -121,32 +239,41 @@ function MenuRow({
   label,
   icon,
   href,
+  accent,
+  start,
   onClick,
 }: {
   label: string;
   icon: ReactNode;
   href?: string;
+  accent?: boolean;
+  // Where keyboard focus lands when the menu opens.
+  start?: boolean;
   onClick?: () => void;
 }) {
-  const className =
-    "flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-[var(--ink)] hover:bg-white/5";
+  const className = cx(
+    "flex min-h-11 w-full items-center gap-3 px-4 text-left text-sm transition-colors hover:bg-white/[0.06] focus-visible:bg-white/[0.06] focus-visible:-outline-offset-2 active:bg-white/[0.1]",
+    accent ? "font-semibold !text-[var(--accent)]" : "!text-[var(--ink)]",
+  );
   const inner = (
     <>
-      <span className="flex h-5 w-5 items-center justify-center text-[var(--ink)]">{icon}</span>
+      <span className={cx("flex h-5 w-5 items-center justify-center", accent ? "text-[var(--accent)]" : "text-[var(--muted)]")}>
+        {icon}
+      </span>
       {label}
     </>
   );
 
   if (href) {
     return (
-      <Link href={href} className={className} onClick={onClick}>
+      <Link href={href} role="menuitem" data-menu-start={start || undefined} className={className} onClick={onClick}>
         {inner}
       </Link>
     );
   }
 
   return (
-    <button type="button" className={className} onClick={onClick}>
+    <button type="button" role="menuitem" className={className} onClick={onClick}>
       {inner}
     </button>
   );

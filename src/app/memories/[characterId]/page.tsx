@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
@@ -8,7 +9,7 @@ import { useSession } from "@/components/auth-gate";
 import { ACCOUNT_PAGE, Notice, SectionCard, SignInPrompt, solidDangerClass } from "@/components/account/account-ui";
 import { PencilIcon, PinIcon, TrashIcon } from "@/components/account/account-icons";
 import { BrainIcon, ChevronLeftIcon } from "@/components/icons";
-import { Button, Panel, buttonClass, cx, inputClass } from "@/components/ui";
+import { Button, ButtonLink, EmptyState, Panel, buttonClass, cx, inputClass, isStaticArt } from "@/components/ui";
 import { ApiError, useApi } from "@/lib/api";
 import type { CharacterDTO, MemoryDTO } from "@/lib/api-types";
 
@@ -281,10 +282,11 @@ export default function MemoriesPage() {
     body = (
       <ul className="grid gap-3 sm:grid-cols-2" aria-label="Loading memories">
         {[0, 1, 2, 3].map((row) => (
-          <li key={row} className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5">
-            <div className="h-5 w-20 animate-pulse rounded-full bg-white/[0.06]" />
-            <div className="mt-4 h-4 w-full animate-pulse rounded-full bg-white/[0.06]" />
-            <div className="mt-2 h-4 w-2/3 animate-pulse rounded-full bg-white/[0.06]" />
+          <li key={row} className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4 sm:p-5">
+            <div className="h-5 w-20 animate-pulse rounded-full bg-white/[0.06] motion-reduce:animate-none" />
+            <div className="mt-4 h-4 w-full animate-pulse rounded-full bg-white/[0.06] motion-reduce:animate-none" />
+            <div className="mt-2 h-4 w-2/3 animate-pulse rounded-full bg-white/[0.06] motion-reduce:animate-none" />
+            <div className="mt-5 h-8 w-40 animate-pulse rounded-full bg-white/[0.04] motion-reduce:animate-none" />
           </li>
         ))}
       </ul>
@@ -314,23 +316,28 @@ export default function MemoriesPage() {
     );
   } else if (loaded.memories.length === 0) {
     body = (
-      <Panel className="flex flex-col items-center px-6 py-12 text-center">
-        <span
-          aria-hidden
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]"
-        >
-          <BrainIcon className="h-7 w-7" />
-        </span>
-        <p className="mt-4 max-w-md text-sm leading-6 text-[var(--muted)]">
-          {Name} hasn&apos;t saved anything about you yet. As you talk, the things that matter show up here, and you can edit
-          or delete any of them.
-        </p>
-        {person ? (
-          <Link href={`/date/${person.id}`} className={buttonClass("primary", "lg", "mt-6")}>
-            Talk to {name}
-          </Link>
-        ) : null}
-      </Panel>
+      <EmptyState
+        // The header already shows the brain icon when there's no portrait.
+        icon={person ? <BrainIcon className="h-7 w-7" /> : undefined}
+        title="No memories yet"
+        body={
+          <>
+            {Name} hasn&apos;t saved anything about you yet. As you talk, the things that matter show up here, and you can
+            edit or delete any of them.
+          </>
+        }
+        action={
+          person ? (
+            <ButtonLink href={`/date/${person.id}`} size="lg">
+              Talk to {name}
+            </ButtonLink>
+          ) : (
+            <ButtonLink href="/chat" variant="secondary" size="lg">
+              Back to chats
+            </ButtonLink>
+          )
+        }
+      />
     );
   } else {
     const count = loaded.memories.length;
@@ -408,10 +415,14 @@ export default function MemoriesPage() {
 
         <Panel className="relative mt-3 overflow-hidden">
           {person?.image ? (
-            <img
+            // A tiny thumbnail is plenty under a heavy blur.
+            <Image
               src={person.image}
               alt=""
-              className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-25 blur-2xl"
+              fill
+              sizes="64px"
+              unoptimized={!isStaticArt(person.image)}
+              className="pointer-events-none scale-110 object-cover opacity-25 blur-2xl"
             />
           ) : null}
           <div className="absolute inset-0 bg-gradient-to-r from-[var(--surface)] via-[var(--surface)]/85 to-[var(--surface)]/60" />
@@ -421,7 +432,17 @@ export default function MemoriesPage() {
                 className="relative aspect-[3/4] w-16 shrink-0 overflow-hidden rounded-xl ring-1 ring-white/10 sm:row-span-3 sm:w-28"
                 style={{ background: person.color }}
               >
-                {person.image ? <img src={person.image} alt="" className="h-full w-full object-cover" /> : null}
+                {person.image ? (
+                  <Image
+                    src={person.image}
+                    alt=""
+                    fill
+                    sizes="(min-width: 640px) 112px, 64px"
+                    loading="eager"
+                    unoptimized={!isStaticArt(person.image)}
+                    className="object-cover"
+                  />
+                ) : null}
               </span>
             ) : (
               <span

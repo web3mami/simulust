@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* The desktop sidebar folded to a rail. The layout's boot script sets the
+   attribute before first paint, so a folded sidebar never flashes wide.
+   `rail:` styles the sidebar itself, `in-rail:` anything inside it (the
+   drawer reuses the same links and never folds). */
+@custom-variant rail (html[data-sidebar="collapsed"] &);
+@custom-variant in-rail (html[data-sidebar="collapsed"] #app-sidebar &);
+
 :root {
   /* Near-black surfaces, one pink accent, amber only for Premium. */
   --bg: #0d0d10;
@@ -19,6 +26,8 @@
   --gold: var(--accent);
   --background: var(--bg);
   --foreground: var(--ink);
+  /* Native controls, scrollbars and autofill in the dark theme. */
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -43,6 +52,8 @@
     font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
     letter-spacing: 0.005em;
     -webkit-font-smoothing: antialiased;
+    /* Buttons have their own press state; the grey flash on tap looks broken. */
+    -webkit-tap-highlight-color: transparent;
   }
 
   * {
@@ -58,6 +69,16 @@
   input {
     font: inherit;
   }
+
+  /* One brand focus ring for keyboard users; mouse clicks don't show it. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+  }
 }
 
 /* Horizontal rows of cards and chips scroll without a visible bar. */
@@ -67,4 +88,91 @@
 
 .no-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+/* Before React knows whether this visitor passed the age check, the server
+   sends both the check and the app. The boot script marks returning visitors
+   so they see the app on first paint and newcomers see the check, with no
+   blank screen either way. */
+.age-pending-app {
+  display: contents;
+}
+
+html:not([data-age-ok]) .age-pending-app {
+  display: none;
+}
+
+html[data-age-ok] .age-pending-gate {
+  display: none;
+}
+
+/* Motion: short and quiet, and off for people who ask for less. */
+@keyframes page-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes gate-drift {
+  to {
+    transform: translateY(-6%) scale(1.05);
+  }
+}
+
+/* Opacity only, and nothing kept once it ends (fill "backwards"): a lasting
+   transform or opacity on the page wrapper would trap the pages' fixed sheets
+   and modals underneath the top bar. */
+.page-in {
+  animation: page-in 0.16s ease-out backwards;
+}
+
+.animate-menu-in {
+  animation: menu-in 0.14s ease-out backwards;
+}
+
+.animate-modal-in {
+  animation: modal-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+.animate-fade-in {
+  animation: page-in 0.18s ease-out backwards;
+}
+
+.animate-gate-drift {
+  animation: gate-drift 40s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-in,
+  .animate-menu-in,
+  .animate-modal-in,
+  .animate-fade-in,
+  .animate-gate-drift {
+    animation: none;
+  }
 }

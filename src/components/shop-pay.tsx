@@ -1,11 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { toDataURL } from "qrcode";
 import { useSignAndSendTransaction, useWallets, type ConnectedStandardSolanaWallet } from "@privy-io/react-auth/solana";
 import { useSession } from "@/components/auth-gate";
 import { ChevronRightIcon, CloseIcon, CoinIcon } from "@/components/icons";
-import { CheckIcon, CurrencyMark } from "@/components/premium/parts";
+import { isHeld } from "@/components/premium/buy";
+import styles from "@/components/premium/motion.module.css";
+import { CheckIcon, CurrencyMark, TrustRow, formatDate } from "@/components/premium/parts";
+import { prefersReducedMotion, useDialog } from "@/components/premium/use-dialog";
 import { PremiumIcon } from "@/components/premium-icon";
 import { isPrivyConfigured, solanaChain } from "@/components/privy-app";
 import { buttonClass, cx } from "@/components/ui";
@@ -24,6 +27,9 @@ const POLL_MS = 2_000;
 // checked less often than an open one.
 const CLOSED_POLL_MS = 15_000;
 const IS_DEV = process.env.NODE_ENV !== "production";
+// How long a checkout holds its price; the same 15 minutes the server sets
+// (ORDER_TTL_MS). Only used to draw the countdown bar.
+const HOLD_MS = 15 * 60_000;
 
 function messageOf(error: unknown, fallback: string) {
   return error instanceof ApiError ? error.message : fallback;
@@ -42,39 +48,6 @@ function explorerUrl(signature: string, cluster: "mainnet" | "devnet" | undefine
   return `https://solscan.io/tx/${signature}${cluster === "devnet" ? "?cluster=devnet" : ""}`;
 }
 
-type ButtonVariant = Parameters<typeof buttonClass>[0];
-type ButtonSize = Parameters<typeof buttonClass>[1];
-
-export function BuyButton({
-  product,
-  label,
-  variant = "secondary",
-  size = "md",
-  className,
-  "aria-label": ariaLabel,
-  onBuy,
-}: {
-  product: Product;
-  label?: string;
-  variant?: ButtonVariant;
-  size?: ButtonSize;
-  className?: string;
-  "aria-label"?: string;
-  onBuy: (product: Product) => void;
-}) {
-  const { session, openLogin } = useSession();
-  return (
-    <button
-      type="button"
-      aria-label={ariaLabel}
-      className={buttonClass(variant, size, cx("w-full", className))}
-      onClick={() => (session ? onBuy(product) : openLogin())}
-    >
-      {label ?? `Buy for ${formatUsd(product.usdCents)}`}
-    </button>
-  );
-}
-
 function useRemaining(expiresAt: string | null) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -83,13 +56,6 @@ function useRemaining(expiresAt: string | null) {
     return () => clearInterval(timer);
   }, [expiresAt]);
   return expiresAt ? Math.max(0, Date.parse(expiresAt) - now) : 0;
-}
-
-// A payment arrived and waits on final checks (sanctions screening) before
-// anything is added. The checkout may have closed meanwhile: the payment can
-// have landed just before it did.
-export function isHeld(order: OrderDTO) {
-  return order.signature !== null && ["pending", "expired", "underpaid"].includes(order.status);
 }
 
 // Polls the order for as long as the server says a payment could still be
@@ -155,6 +121,14 @@ function AlertIcon({ className = "h-7 w-7" }: { className?: string }) {
     >
       <circle cx="12" cy="12" r="8.5" />
       <path d="M12 7.5v5.5M12 16.4v.1" />
+    </svg>
+  );
+}
+
+function CrossIcon({ className = "h-3 w-3" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={cx("shrink-0", className)} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden>
+      <path d="m7 7 10 10M17 7 7 17" />
     </svg>
   );
 }
@@ -227,7 +201,7 @@ function PrivyWalletPay({ order, onSent }: { order: OrderDTO; onSent: () => void
         <p className="text-center text-[11px] text-[var(--muted)]">From {shortAddress(wallets[0].address)}</p>
       ) : null}
       {error ? <ErrorText>{error}</ErrorText> : null}
-      <div className="flex items-center gap-3 pt-2 text-[11px] font-medium uppercase tracking-wide text-[var(--muted)]" aria-hidden>
+      <div className="flex items-center gap-3 pt-2 text-[11px] font-medium uppercase tracking-wide text-[var(--muted)] md:hidden" aria-hidden>
         <span className="h-px flex-1 bg-[var(--line)]" />
         or
         <span className="h-px flex-1 bg-[var(--line)]" />
@@ -267,67 +241,125 @@ function CopyRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function OtherWallet({ order, alone }: { order: OrderDTO; alone: boolean }) {
-  const [qr, setQr] = useState<string | null>(null);
-  const [qrFailed, setQrFailed] = useState(false);
-
+// Draws the Solana Pay QR code. The library loads only here, once a checkout
+// has an order to pay.
+function useQrCode(orderId: string | null) {
+  // Kept with the order it was drawn for, so a new order never shows an old code.
+  const [drawn, setDrawn] = useState<{ id: string; url: string | null } | null>(null);
   useEffect(() => {
+    if (!orderId) return;
     let live = true;
     // A Solana Pay transaction request: the wallet fetches a transaction we
     // build, with the order's reference and memo already inside.
-    const link = `solana:${encodeURIComponent(`${window.location.origin}/api/orders/${order.id}/transaction`)}`;
-    toDataURL(link, { margin: 1, width: 232, errorCorrectionLevel: "M", color: { dark: "#0d0d10", light: "#ffffff" } })
-      .then((url) => live && setQr(url))
-      .catch(() => live && setQrFailed(true));
+    const link = `solana:${encodeURIComponent(`${window.location.origin}/api/orders/${orderId}/transaction`)}`;
+    import("qrcode")
+      .then(({ toDataURL }) =>
+        toDataURL(link, { margin: 1, width: 232, errorCorrectionLevel: "M", color: { dark: "#0d0d10", light: "#ffffff" } }),
+      )
+      .then((url) => live && setDrawn({ id: orderId, url }))
+      .catch(() => live && setDrawn({ id: orderId, url: null }));
     return () => {
       live = false;
     };
-  }, [order.id]);
+  }, [orderId]);
+  const mine = drawn && drawn.id === orderId ? drawn : null;
+  return { qr: mine?.url ?? null, failed: mine !== null && mine.url === null };
+}
 
+function QrImage({ qr, failed, small }: { qr: string | null; failed: boolean; small?: boolean }) {
+  const box = small ? "h-[200px] w-[200px]" : "h-[200px] w-[200px] sm:h-[232px] sm:w-[232px]";
   return (
-    <div className="rounded-2xl bg-[var(--surface)] p-4 ring-1 ring-white/5 sm:p-5">
-      <p className="text-sm font-semibold text-[var(--ink)]">{alone ? "Pay from your wallet" : "Pay from another wallet"}</p>
-      <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-        Scan with Phantom, Solflare or any Solana Pay wallet. The payment is matched to this order automatically.
-      </p>
+    <div className="rounded-2xl bg-white p-2.5 shadow-[0_10px_40px_-12px_rgba(255,79,139,0.45)]">
+      {qr ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={qr} alt="Solana Pay QR code for this order" width={232} height={232} className={cx("block", box)} />
+      ) : failed ? (
+        <div className={cx("flex items-center justify-center px-6 text-center text-xs text-neutral-500", box)}>
+          Couldn&apos;t draw the QR code. Use Open in wallet app.
+        </div>
+      ) : (
+        <div className={cx("rounded-lg", box, styles.shimmerLight)} role="status">
+          <span className="sr-only">Drawing the QR code…</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScanCaption({ order }: { order: OrderDTO }) {
+  return (
+    <p className="mt-3 flex items-start justify-center gap-2 text-center text-xs leading-5 text-[var(--muted)]">
+      <CurrencyMark currency={order.currency} className="mt-0.5 h-4 w-4 text-[9px]" />
+      <span>Scan with Phantom, Solflare or any Solana Pay wallet. It&apos;s matched to this order automatically.</span>
+    </p>
+  );
+}
+
+function OpenInWallet({ order, className }: { order: OrderDTO; className?: string }) {
+  if (!order.solanaPayUrl) return null;
+  return (
+    <a href={order.solanaPayUrl} className={buttonClass("secondary", "lg", cx("w-full", className))}>
+      Open in wallet app
+    </a>
+  );
+}
+
+function canPayId(order: OrderDTO | null, paymentsReady: boolean) {
+  return order && paymentsReady && order.status === "pending" && !isHeld(order) ? order.id : null;
+}
+
+// From sm up: the QR code in its own card, with its caption and the deep link.
+function QrCard({ order, qr, failed, alone }: { order: OrderDTO; qr: string | null; failed: boolean; alone: boolean }) {
+  return (
+    <div className="rounded-2xl bg-[var(--surface)] p-5 ring-1 ring-white/5">
+      <p className="text-center text-sm font-semibold text-[var(--ink)]">{alone ? "Scan to pay" : "Pay from another wallet"}</p>
       <div className="mt-4 flex justify-center">
-        <div className="rounded-2xl bg-white p-2.5 shadow-[0_10px_40px_-12px_rgba(255,79,139,0.45)]">
-          {qr ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={qr} alt="Solana Pay QR code for this order" width={232} height={232} className="block h-[200px] w-[200px] sm:h-[232px] sm:w-[232px]" />
-          ) : (
-            <div className="flex h-[200px] w-[200px] items-center justify-center px-6 text-center text-xs text-neutral-500 sm:h-[232px] sm:w-[232px]">
-              {qrFailed ? "Couldn't draw the QR code. Use Open in wallet." : "Drawing QR code…"}
-            </div>
-          )}
-        </div>
+        <QrImage qr={qr} failed={failed} />
       </div>
-      {order.solanaPayUrl ? (
-        <a href={order.solanaPayUrl} className={buttonClass("secondary", "lg", "mt-4 w-full")}>
-          Open in wallet app
-        </a>
-      ) : null}
-      <details className="group mt-3 text-xs text-[var(--muted)]">
-        <summary className="flex min-h-10 cursor-pointer select-none list-none items-center justify-center gap-1 font-medium hover:text-[var(--ink)] [&::-webkit-details-marker]:hidden">
-          Payment details
-          <ChevronRightIcon className="h-4 w-4 transition-transform group-open:rotate-90" />
-        </summary>
-        <p className="mt-1 leading-5">
-          Pay from a wallet, not an exchange. A plain transfer without the reference below can&apos;t be matched to your
-          order, so use the QR code or Open in wallet app when you can.
-        </p>
-        <div className="mt-2 divide-y divide-[var(--line)]">
-          <CopyRow label="Send exactly" value={order.amountDisplay} />
-          <CopyRow label="To" value={order.recipient} />
-          <CopyRow label="Reference" value={order.reference} />
-        </div>
-      </details>
+      <ScanCaption order={order} />
+      <OpenInWallet order={order} className="mt-4" />
+    </div>
+  );
+}
+
+function PaymentDetails({ order }: { order: OrderDTO }) {
+  return (
+    <details className="group text-xs text-[var(--muted)]">
+      <summary className="flex min-h-10 cursor-pointer select-none list-none items-center justify-center gap-1 rounded-full font-medium outline-none hover:text-[var(--ink)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] [&::-webkit-details-marker]:hidden">
+        Payment details
+        <ChevronRightIcon className="h-4 w-4 transition-transform group-open:rotate-90" />
+      </summary>
+      <p className="mt-1 leading-5">
+        Pay from a wallet, not an exchange. A plain transfer without the reference below can&apos;t be matched to your
+        order, so use the QR code or Open in wallet app when you can.
+      </p>
+      <div className="mt-2 divide-y divide-[var(--line)] rounded-2xl bg-[var(--surface)] px-4 ring-1 ring-white/5">
+        <CopyRow label="Send exactly" value={order.amountDisplay} />
+        <CopyRow label="To" value={order.recipient} />
+        <CopyRow label="Reference" value={order.reference} />
+      </div>
+    </details>
+  );
+}
+
+// How much of the price hold is left, as a bar that warms up as it runs down.
+function HoldBar({ remaining, closing }: { remaining: number; closing: boolean }) {
+  const share = Math.max(0, Math.min(1, remaining / HOLD_MS));
+  return (
+    <div className="mx-auto mt-4 h-1 max-w-[16rem] overflow-hidden rounded-full bg-white/10" aria-hidden>
+      <div
+        className={cx(
+          "h-full rounded-full transition-[width,background-color] duration-1000 ease-linear",
+          closing ? "bg-red-400" : remaining <= 2 * 60_000 ? "bg-[var(--premium)]" : "bg-white/40",
+        )}
+        style={{ width: `${share * 100}%` }}
+      />
     </div>
   );
 }
 
 function Body({ children }: { children: ReactNode }) {
-  return <div className="space-y-4 px-5 pb-6 pt-5 sm:px-6">{children}</div>;
+  return <div className={cx("space-y-4 px-5 pb-6 pt-5 sm:px-6", styles.fade)}>{children}</div>;
 }
 
 const NOTICE_TONES = {
@@ -365,31 +397,74 @@ function Notice({
 // final checks, done.
 const STEPS = ["Choose", "Pay", "Confirm", "Done"] as const;
 
-function Steps({ current, failed }: { current: number; failed: boolean }) {
+// How a stopped checkout looks on the step bar: an expiry is calm, a short or
+// late payment a warning, a refused or failed one an error.
+type StopTone = "calm" | "warn" | "bad";
+
+function Steps({ current, failed, tone = "bad" }: { current: number; failed: boolean; tone?: StopTone }) {
   return (
-    <ol className="flex gap-2" aria-label="Checkout progress">
+    <ol className="flex items-start" aria-label="Checkout progress">
       {STEPS.map((label, index) => {
-        const reached = index <= current;
-        const bad = failed && index === current;
-        const live = !failed && index === current && current < STEPS.length - 1;
+        const here = index === current;
+        const stopped = failed && here;
+        const done = index < current || (here && index === STEPS.length - 1 && !failed);
+        const live = here && !failed && index > 0 && index < STEPS.length - 1;
         return (
-          <li key={label} className="flex flex-1 flex-col gap-1.5" aria-current={index === current ? "step" : undefined}>
-            <span
-              className={cx(
-                "h-1 rounded-full",
-                bad ? "bg-red-400" : reached ? "bg-[var(--accent)]" : "bg-white/10",
-                live && index > 0 && "animate-pulse motion-reduce:animate-none",
-              )}
-            />
-            <span
-              className={cx(
-                "text-[11px] font-semibold",
-                bad ? "text-red-300" : reached ? "text-[var(--ink)]" : "text-[var(--muted)]",
-              )}
-            >
-              {label}
-              {bad ? <span className="sr-only"> (stopped)</span> : null}
-            </span>
+          <li
+            key={label}
+            className={cx("flex items-start", index < STEPS.length - 1 && "flex-1")}
+            aria-current={here ? "step" : undefined}
+          >
+            <div className="flex w-12 flex-col items-center gap-1.5">
+              <span
+                className={cx(
+                  "relative flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold transition-colors",
+                  stopped
+                    ? tone === "calm"
+                      ? "bg-white/15 text-[var(--ink)]"
+                      : tone === "warn"
+                        ? "bg-[var(--premium)] text-[#1a1206]"
+                        : "bg-red-400 text-[#1a0a0a]"
+                    : done
+                      ? "bg-[var(--accent)] text-[var(--accent-ink)]"
+                      : here
+                        ? "bg-[var(--accent)] text-[var(--accent-ink)] ring-4 ring-[var(--accent-soft)]"
+                        : "text-[var(--muted)] ring-1 ring-inset ring-white/15",
+                )}
+              >
+                {stopped ? (
+                  tone === "calm" ? <ClockIcon className="h-3.5 w-3.5" /> : <CrossIcon />
+                ) : done ? (
+                  <CheckIcon className="h-3 w-3" />
+                ) : (
+                  index + 1
+                )}
+                {live ? (
+                  <span
+                    aria-hidden
+                    className="absolute -inset-[5px] animate-spin rounded-full border-2 border-transparent border-t-[var(--accent)] motion-reduce:hidden"
+                  />
+                ) : null}
+              </span>
+              <span
+                className={cx(
+                  "text-xs font-semibold",
+                  stopped && tone === "bad" ? "text-red-300" : index <= current ? "text-[var(--ink)]" : "text-[var(--muted)]",
+                )}
+              >
+                {label}
+                {stopped ? <span className="sr-only"> (stopped)</span> : done ? <span className="sr-only"> (done)</span> : null}
+              </span>
+            </div>
+            {index < STEPS.length - 1 ? (
+              <span
+                aria-hidden
+                className={cx(
+                  "-mx-3 mt-[11px] h-0.5 flex-1 rounded-full transition-colors",
+                  index < current ? "bg-[var(--accent)]" : "bg-white/10",
+                )}
+              />
+            ) : null}
           </li>
         );
       })}
@@ -405,6 +480,42 @@ function SummaryRow({ label, value, strong }: { label: string; value: ReactNode;
         {value}
       </dd>
     </div>
+  );
+}
+
+// The look of each closed status. The words stay in CLOSED_COPY.
+const CLOSED_TONE: Record<string, { tone: StopTone; badge: string }> = {
+  expired: { tone: "calm", badge: "bg-white/5 text-[var(--muted)]" },
+  underpaid: { tone: "warn", badge: "bg-[var(--premium)]/10 text-[var(--premium)]" },
+  refund_due: { tone: "warn", badge: "bg-[var(--premium)]/10 text-[var(--premium)]" },
+  blocked: { tone: "bad", badge: "bg-red-500/10 text-red-300" },
+  failed: { tone: "bad", badge: "bg-red-500/10 text-red-300" },
+};
+
+// Counts up to a number once, over a moment; straight to it for reduced motion.
+function useCountUp(target: number, ms = 600) {
+  const [value, setValue] = useState(() => (prefersReducedMotion() ? target : 0));
+  useEffect(() => {
+    if (prefersReducedMotion()) return;
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - start) / ms);
+      setValue(Math.round(target * (1 - Math.pow(1 - progress, 3))));
+      if (progress < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return value;
+}
+
+function Received({ credits }: { credits: number }) {
+  const shown = useCountUp(credits);
+  return (
+    <p className="mt-3 flex items-center gap-1.5 text-3xl font-bold tracking-tight text-[var(--premium)] tabular-nums">
+      <CoinIcon className="h-7 w-7" />+{shown.toLocaleString("en-US")}
+    </p>
   );
 }
 
@@ -457,18 +568,23 @@ export function Checkout({ product, onClose }: { product: Product; onClose: () =
     if (settled) void refreshMe();
   }, [settled, refreshMe]);
 
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+  // Closing plays the sheet's exit first; the shop unmounts it after.
+  const [leaving, setLeaving] = useState(false);
+  const leaveTimer = useRef<number | undefined>(undefined);
+  const close = useCallback(() => {
+    if (leaveTimer.current !== undefined) return;
+    if (prefersReducedMotion()) {
+      onClose();
+      return;
     }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    setLeaving(true);
+    leaveTimer.current = window.setTimeout(onClose, 180);
   }, [onClose]);
+  useEffect(() => () => window.clearTimeout(leaveTimer.current), []);
 
-  // Move focus into the dialog so keyboard and screen reader users land in it.
-  useEffect(() => {
-    sheet.current?.focus();
-  }, []);
+  // Focus moves into the sheet and stays there, Escape closes it, the page
+  // behind doesn't scroll, and focus returns to the Buy button afterwards.
+  useDialog(sheet, close);
 
   async function start(simulate = false) {
     setBusy(true);
@@ -507,25 +623,38 @@ export function Checkout({ product, onClose }: { product: Product; onClose: () =
 
   const step = settled ? 3 : closed ? (order?.status === "blocked" ? 2 : 1) : held || sent ? 2 : order ? 1 : 0;
 
+  // Only an order that can still be paid gets a QR code.
+  const qr = useQrCode(canPayId(order, paymentsReady));
+  const closedTone = order && closed ? (CLOSED_TONE[order.status] ?? CLOSED_TONE.failed) : null;
+  // Stop offering ways to pay a minute before the price hold ends (the
+  // payment route refuses then too): a payment sent later could land too
+  // late to be credited.
+  const closing = remaining <= MIN_REMAINING_MS;
+  const canPay = order !== null && !settled && !closed && paymentsReady && !held && !closing;
+
   let body: ReactNode;
   if (settled && order) {
     body = (
       <Body>
         <div className="flex flex-col items-center rounded-2xl bg-[var(--surface)] px-5 py-8 text-center ring-1 ring-white/5" role="status">
-          <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[var(--accent)] text-[var(--accent-ink)] shadow-[0_12px_32px_-8px_rgba(255,79,139,0.7)]">
+          <span
+            className={cx(
+              "flex h-16 w-16 items-center justify-center rounded-full bg-[var(--accent)] text-[var(--accent-ink)] shadow-[0_12px_32px_-8px_rgba(255,79,139,0.7)]",
+              styles.pop,
+            )}
+          >
             <CheckIcon className="h-8 w-8" />
           </span>
           <p className="mt-4 text-xl font-bold tracking-tight text-[var(--ink)]">Payment received</p>
-          <p className="mt-3 flex items-center gap-1.5 text-3xl font-bold tracking-tight text-[var(--premium)]">
-            <CoinIcon className="h-7 w-7" />+{product.credits.toLocaleString("en-US")}
-          </p>
+          <Received credits={product.credits} />
           <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
             {formatCredits(product.credits)} added.
             {me ? ` Your balance is ${formatCredits(me.balance)}.` : null}
           </p>
           {product.memberDays && me?.memberUntil ? (
-            <p className="mt-1 text-sm leading-6 text-[var(--ink)]">
-              You&apos;re a member until {new Date(me.memberUntil).toLocaleDateString()}.
+            <p className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-full bg-[var(--premium)]/10 px-3 text-sm font-semibold text-[var(--premium)]">
+              <PremiumIcon className="h-4 w-4" />
+              Member until {formatDate(me.memberUntil)}
             </p>
           ) : null}
           {order.signature && !order.signature.startsWith("dev-") ? (
@@ -539,18 +668,21 @@ export function Checkout({ product, onClose }: { product: Product; onClose: () =
             </a>
           ) : null}
         </div>
-        <button type="button" className={buttonClass("primary", "lg", "w-full")} onClick={onClose}>
+        <button type="button" className={buttonClass("primary", "lg", "w-full")} onClick={close}>
           Done
         </button>
+        <Link href="/chat" className={buttonClass("secondary", "lg", "w-full")}>
+          Start chatting
+        </Link>
       </Body>
     );
-  } else if (order && closed) {
+  } else if (order && closed && closedTone) {
     const copy = CLOSED_COPY[order.status] ?? CLOSED_COPY.failed;
     body = (
       <Body>
         <div className="flex flex-col items-center rounded-2xl bg-[var(--surface)] px-5 py-7 text-center ring-1 ring-white/5" role="status">
-          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500/10 text-red-300">
-            <AlertIcon />
+          <span className={cx("flex h-14 w-14 items-center justify-center rounded-full", closedTone.badge)}>
+            {closedTone.tone === "calm" ? <ClockIcon className="h-7 w-7" /> : <AlertIcon />}
           </span>
           <p className="mt-4 text-lg font-bold tracking-tight text-[var(--ink)]">{copy.title}</p>
           <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{copy.body}</p>
@@ -571,64 +703,88 @@ export function Checkout({ product, onClose }: { product: Product; onClose: () =
       </Body>
     );
   } else if (order) {
-    // Stop offering ways to pay a minute before the price hold ends (the
-    // payment route refuses then too): a payment sent later could land too
-    // late to be credited.
-    const closing = remaining <= MIN_REMAINING_MS;
-    const canPay = paymentsReady && !held && !closing;
     body = (
       <Body>
-        <div className="rounded-2xl bg-[var(--surface)] px-5 py-5 text-center ring-1 ring-white/5">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--muted)]">Amount due</p>
-          <p className="mt-2 flex items-center justify-center gap-2 text-3xl font-bold tracking-tight text-[var(--ink)]">
-            <CurrencyMark currency={order.currency} className="h-7 w-7 text-xs" />
-            {order.amountDisplay}
-          </p>
-          <p className="mt-1 text-xs text-[var(--muted)]">{formatUsd(order.usdCents)}</p>
-          <p
-            className={cx(
-              "mt-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold tabular-nums",
-              held
-                ? "bg-[var(--accent-soft)] text-[var(--accent)]"
-                : closing
-                  ? "bg-red-500/10 text-red-300"
-                  : "bg-white/5 text-[var(--ink)]",
-            )}
-          >
-            {held ? <CheckIcon className="h-3.5 w-3.5" /> : <ClockIcon />}
-            {held
-              ? "Payment received"
-              : remaining > 0
-                ? `Price held for ${formatClock(remaining)}`
-                : "Checking for a late payment…"}
-          </p>
+        <div className={cx(canPay && "md:grid md:grid-cols-[minmax(0,1fr)_19rem] md:items-start md:gap-6")}>
+          <div className="space-y-4">
+            <div className="rounded-2xl bg-[var(--surface)] px-5 py-5 text-center ring-1 ring-white/5">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--muted)]">Amount due</p>
+              <p className="mt-2 flex items-center justify-center gap-2 text-3xl font-bold tracking-tight text-[var(--ink)] tabular-nums">
+                <CurrencyMark currency={order.currency} className="h-7 w-7 text-xs" />
+                {order.amountDisplay}
+              </p>
+              <p className="mt-1 text-xs text-[var(--muted)]">{formatUsd(order.usdCents)}</p>
+              {!held && remaining > 0 ? <HoldBar remaining={remaining} closing={closing} /> : null}
+              <p
+                className={cx(
+                  "mt-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold tabular-nums",
+                  held
+                    ? "bg-[var(--accent-soft)] text-[var(--accent)]"
+                    : closing
+                      ? "bg-red-500/10 text-red-300"
+                      : remaining <= 2 * 60_000
+                        ? "bg-[var(--premium)]/10 text-[var(--premium)]"
+                        : "bg-white/5 text-[var(--ink)]",
+                )}
+              >
+                {held ? <CheckIcon className="h-3.5 w-3.5" /> : <ClockIcon />}
+                {held
+                  ? "Payment received"
+                  : remaining > 0
+                    ? `Price held for ${formatClock(remaining)}`
+                    : "Checking for a late payment…"}
+              </p>
+            </div>
+            {held ? (
+              <Notice title="Payment received" tone="good">
+                Final checks are running. This can take a few minutes. You can close this window; your credits will be
+                added automatically.
+              </Notice>
+            ) : sent ? (
+              <Notice title="Sent" tone="good">
+                Waiting for the Solana network to confirm. This usually takes a few seconds.
+              </Notice>
+            ) : closing ? (
+              <Notice title={remaining > 0 ? "The price hold is ending" : "The price hold has ended"} tone="warn">
+                Don&apos;t send a payment now. If you already sent one, we&apos;re still looking for it.
+              </Notice>
+            ) : null}
+            {canPay && WalletPay ? <WalletPay order={order} onSent={() => setSent(true)} /> : null}
+            {canPay ? (
+              // Phones: the wallet is usually on this device, so the deep link
+              // comes first and the QR code waits behind a tap.
+              <div className="space-y-3 sm:hidden">
+                <OpenInWallet order={order} />
+                <details className="group rounded-2xl bg-[var(--surface)] ring-1 ring-white/5">
+                  <summary className="flex min-h-12 cursor-pointer select-none list-none items-center justify-between gap-2 px-4 text-sm font-semibold text-[var(--ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] [&::-webkit-details-marker]:hidden">
+                    Pay from another device
+                    <ChevronRightIcon className="h-4 w-4 text-[var(--muted)] transition-transform group-open:rotate-90" />
+                  </summary>
+                  <div className="flex flex-col items-center px-4 pb-4">
+                    <QrImage qr={qr.qr} failed={qr.failed} small />
+                    <ScanCaption order={order} />
+                  </div>
+                </details>
+              </div>
+            ) : null}
+            {IS_DEV && !held ? (
+              <button
+                type="button"
+                disabled={busy}
+                className={DEV_BUTTON}
+                onClick={() => void simulatePayment(order.id)}
+              >
+                Simulate payment (development only)
+              </button>
+            ) : null}
+          </div>
+          {canPay ? (
+            <div className="mt-4 hidden sm:block md:mt-0">
+              <QrCard order={order} qr={qr.qr} failed={qr.failed} alone={!WalletPay} />
+            </div>
+          ) : null}
         </div>
-        {held ? (
-          <Notice title="Payment received" tone="good">
-            Final checks are running. This can take a few minutes. You can close this window; your credits will be
-            added automatically.
-          </Notice>
-        ) : sent ? (
-          <Notice title="Sent" tone="good">
-            Waiting for the Solana network to confirm. This usually takes a few seconds.
-          </Notice>
-        ) : closing ? (
-          <Notice title={remaining > 0 ? "The price hold is ending" : "The price hold has ended"} tone="warn">
-            Don&apos;t send a payment now. If you already sent one, we&apos;re still looking for it.
-          </Notice>
-        ) : null}
-        {canPay && WalletPay ? <WalletPay order={order} onSent={() => setSent(true)} /> : null}
-        {canPay ? <OtherWallet order={order} alone={!WalletPay} /> : null}
-        {IS_DEV && !held ? (
-          <button
-            type="button"
-            disabled={busy}
-            className={DEV_BUTTON}
-            onClick={() => void simulatePayment(order.id)}
-          >
-            Simulate payment (development only)
-          </button>
-        ) : null}
+        {canPay ? <PaymentDetails order={order} /> : null}
       </Body>
     );
   } else {
@@ -670,8 +826,13 @@ export function Checkout({ product, onClose }: { product: Product; onClose: () =
                       </span>
                       <span className="mt-2 block text-xs leading-5 text-[var(--muted)]">{hint}</span>
                       {on ? (
-                        <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--accent)] text-[var(--accent-ink)]">
-                          <CheckIcon className="h-3 w-3" />
+                        <span
+                          className={cx(
+                            "absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-full bg-[var(--accent)] text-[var(--accent-ink)]",
+                            styles.pop,
+                          )}
+                        >
+                          <CheckIcon className="h-3.5 w-3.5" />
                         </span>
                       ) : null}
                     </label>
@@ -703,30 +864,39 @@ export function Checkout({ product, onClose }: { product: Product; onClose: () =
             {busy ? "Simulating…" : "Simulate payment (development only)"}
           </button>
         ) : null}
-        <p className="text-center text-[11px] leading-4 text-[var(--muted)]">
-          Credits never expire. Unused credits can be refunded within 14 days.
-        </p>
+        <div className="space-y-2 pt-1">
+          <TrustRow compact />
+          <p className="text-center text-[11px] leading-4 text-[var(--muted)]">
+            Unused credits can be refunded within 14 days.
+          </p>
+        </div>
       </Body>
     );
   }
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-sm sm:items-center sm:px-4"
+      className={cx(
+        "fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-sm sm:items-center sm:px-4",
+        leaving ? styles.overlayOut : styles.overlayIn,
+      )}
       role="dialog"
       aria-modal="true"
       aria-label={`Buy ${product.name}`}
       onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) close();
       }}
     >
       <div
         ref={sheet}
         tabIndex={-1}
-        className="max-h-[92dvh] w-full max-w-md overflow-y-auto overscroll-contain rounded-t-3xl bg-[var(--bg-2)] pb-[env(safe-area-inset-bottom)] shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)] outline-none ring-1 ring-white/10 sm:rounded-3xl"
+        className={cx(
+          "max-h-[92dvh] w-full max-w-md overflow-y-auto overscroll-contain rounded-t-3xl bg-[var(--bg-2)] pb-[env(safe-area-inset-bottom)] shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)] outline-none ring-1 ring-white/10 transition-[max-width] duration-300 ease-out sm:rounded-3xl",
+          canPay && "md:max-w-3xl",
+          leaving ? styles.sheetOut : styles.sheetIn,
+        )}
       >
-        <div className="mx-auto mt-2.5 h-1 w-10 rounded-full bg-white/15 sm:hidden" aria-hidden />
-        <div className="flex items-start gap-3 px-5 pt-4 sm:px-6 sm:pt-6">
+        <div className="flex items-start gap-3 px-5 pt-5 sm:px-6 sm:pt-6">
           <span
             className={cx(
               "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl",
@@ -738,8 +908,17 @@ export function Checkout({ product, onClose }: { product: Product; onClose: () =
             {product.memberDays ? <PremiumIcon className="h-6 w-6" /> : <CoinIcon className="h-6 w-6" />}
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--premium)]">{product.tag ?? "Credits"}</p>
-            <h2 className="text-xl font-bold leading-tight tracking-tight text-[var(--ink)]">{product.name}</h2>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--premium)]">
+              {product.memberDays ? "Membership" : "Credit pack"}
+            </p>
+            <h2 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xl font-bold leading-tight tracking-tight text-[var(--ink)]">
+              {product.name}
+              {product.tag ? (
+                <span className="rounded-full bg-[var(--premium)]/15 px-2 py-0.5 text-[11px] font-bold tracking-normal text-[var(--premium)]">
+                  {product.tag}
+                </span>
+              ) : null}
+            </h2>
             <p className="mt-0.5 text-xs text-[var(--muted)]">
               {what} · {formatUsd(product.usdCents)}
             </p>
@@ -748,14 +927,16 @@ export function Checkout({ product, onClose }: { product: Product; onClose: () =
             type="button"
             aria-label="Close"
             className="-mr-2 -mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--muted)] hover:bg-white/5 hover:text-[var(--ink)]"
-            onClick={onClose}
+            onClick={close}
           >
             <CloseIcon />
           </button>
         </div>
-        <div className="px-5 pt-5 sm:px-6">
-          <Steps current={step} failed={closed} />
-        </div>
+        {!paymentsReady && !order ? null : (
+          <div className="px-5 pt-5 sm:px-6">
+            <Steps current={step} failed={closed} tone={closedTone?.tone} />
+          </div>
+        )}
         {error ? (
           <div className="px-5 pt-4 sm:px-6">
             <ErrorText>{error}</ErrorText>
