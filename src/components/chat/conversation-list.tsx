@@ -4,13 +4,29 @@ import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSession } from "@/components/auth-gate";
 import { Avatar } from "@/components/chat/avatar";
-import { EXPLORE_HREF, relativeTime } from "@/components/chat/format";
-import { CloseIcon, SearchIcon } from "@/components/icons";
-import { Button, ButtonLink, cx } from "@/components/ui";
+import { relativeTime } from "@/components/chat/format";
+import { CameraIcon, CloseIcon, SearchIcon } from "@/components/icons";
+import { Button, cx, Skeleton } from "@/components/ui";
 import { ApiError, useApi } from "@/lib/api";
 import type { CharacterDTO, ThreadDTO } from "@/lib/api-types";
 
 type Row = { person: CharacterDTO; preview: string; at: string | null };
+
+// Every chat page mounts its own list, so the last answer is kept here: a
+// remount (switching chats) draws the rows at once and refreshes them quietly.
+let threadCache: { key: string; threads: ThreadDTO[] } | null = null;
+
+// Characters seen in the list, so a conversation can draw its header and
+// profile on the first frame instead of waiting for its own fetch.
+const characterCache = new Map<string, CharacterDTO>();
+
+export function rememberCharacter(sessionKey: string, character: CharacterDTO) {
+  characterCache.set(`${sessionKey}:${character.id}`, character);
+}
+
+export function recallCharacter(sessionKey: string, id: string) {
+  return characterCache.get(`${sessionKey}:${id}`) ?? null;
+}
 
 // The list of conversations: search, then one row per character with the last
 // message and when it was sent. Loads GET /api/threads, and again whenever
@@ -33,7 +49,9 @@ export function ConversationList({
   const { ready, session, openLogin } = useSession();
   const api = useApi();
   const sessionKey = session?.detail ?? null;
-  const [state, setState] = useState<{ key: string; threads: ThreadDTO[] | null; error?: string } | null>(null);
+  const [state, setState] = useState<{ key: string; threads: ThreadDTO[] | null; error?: string } | null>(() =>
+    threadCache && threadCache.key === sessionKey ? threadCache : null,
+  );
   const [retry, setRetry] = useState(0);
   const [query, setQuery] = useState("");
 
@@ -42,6 +60,11 @@ export function ConversationList({
     onLoadedRef.current = onLoaded;
   });
 
+  // Rows from the cache count as loaded, so the page can act on them now.
+  useEffect(() => {
+    if (threadCache && threadCache.key === sessionKey) onLoadedRef.current?.(threadCache.threads);
+  }, [sessionKey]);
+
   useEffect(() => {
     if (!sessionKey) return;
     let cancelled = false;
@@ -49,10 +72,13 @@ export function ConversationList({
       try {
         const { threads } = await api<{ threads: ThreadDTO[] }>("/api/threads");
         if (cancelled) return;
+        threadCache = { key: sessionKey, threads };
+        for (const thread of threads) rememberCharacter(sessionKey, thread.character);
         setState({ key: sessionKey, threads });
         onLoadedRef.current?.(threads);
       } catch (error) {
-        if (cancelled) return;
+        // A failed refresh keeps the rows we already have.
+        if (cancelled || threadCache?.key === sessionKey) return;
         setState({
           key: sessionKey,
           threads: null,
@@ -68,16 +94,26 @@ export function ConversationList({
 
   const loaded = state && state.key === sessionKey ? state : null;
 
+  const rows: Row[] = (loaded?.threads ?? []).map((thread) => ({
+    person: thread.character,
+    preview: thread.lastPreview,
+    at: thread.lastMessageAt,
+  }));
+  if (loaded?.threads && current && !rows.some((row) => row.person.id === current.id)) {
+    rows.unshift({ person: current, preview: "New chat", at: null });
+  }
+  const searchable = Boolean(session && loaded?.threads && rows.length > 0);
+
   let body: ReactNode;
   if (!ready || (sessionKey && !loaded)) {
     body = (
-      <ul className="flex flex-col gap-1 px-2" aria-label="Loading chats">
+      <ul className="flex flex-col gap-0.5 px-2" aria-label="Loading chats">
         {[0, 1, 2, 3].map((row) => (
           <li key={row} className="flex items-center gap-3 px-3 py-2.5">
-            <span className="h-12 w-12 shrink-0 animate-pulse rounded-full bg-[var(--surface)]" />
+            <Skeleton className="h-12 w-12 shrink-0 rounded-full" />
             <span className="flex-1 space-y-2">
-              <span className="block h-3 w-1/3 animate-pulse rounded bg-[var(--surface)]" />
-              <span className="block h-3 w-2/3 animate-pulse rounded bg-[var(--surface)]" />
+              <Skeleton className="h-3 w-1/3 rounded" />
+              <Skeleton className="h-3 w-2/3 rounded" />
             </span>
           </li>
         ))}
@@ -107,40 +143,26 @@ export function ConversationList({
         </Button>
       </Notice>
     );
+  } else if (rows.length === 0) {
+    body = (
+      <Notice>
+        <p className="font-semibold text-[var(--ink)]">No chats yet</p>
+        <p className="mt-1">Your conversations will show up here.</p>
+      </Notice>
+    );
   } else {
-    const rows: Row[] = loaded.threads.map((thread) => ({
-      person: thread.character,
-      preview: thread.lastPreview,
-      at: thread.lastMessageAt,
-    }));
-    if (current && !rows.some((row) => row.person.id === current.id)) {
-      rows.unshift({ person: current, preview: "New chat", at: null });
-    }
     const needle = query.trim().toLowerCase();
     const shown = needle
       ? rows.filter((row) => row.person.name.toLowerCase().includes(needle) || row.preview.toLowerCase().includes(needle))
       : rows;
-
-    if (rows.length === 0) {
-      body = (
-        <Notice>
-          <p className="font-semibold text-[var(--ink)]">No chats yet</p>
-          <p className="mt-1">Pick someone to talk to, or create your own.</p>
-          <div className="mt-4 flex flex-wrap justify-center gap-2">
-            <ButtonLink href={EXPLORE_HREF}>Explore characters</ButtonLink>
-            <ButtonLink href="/create" variant="secondary">
-              Create
-            </ButtonLink>
-          </div>
-        </Notice>
-      );
-    } else if (shown.length === 0) {
-      body = <Notice>No chats match &ldquo;{query.trim()}&rdquo;.</Notice>;
-    } else {
-      body = (
+    body =
+      shown.length === 0 ? (
+        <Notice>No chats match &ldquo;{query.trim()}&rdquo;.</Notice>
+      ) : (
         <ul className="flex flex-col gap-0.5 px-2 pb-4">
           {shown.map((row) => {
             const active = row.person.id === activeId;
+            const photo = row.preview.startsWith("Photo:");
             return (
               <li key={row.person.id}>
                 <Link
@@ -148,7 +170,7 @@ export function ConversationList({
                   aria-current={active ? "page" : undefined}
                   className={cx(
                     "relative flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors",
-                    active ? "bg-[var(--surface-2)]" : "hover:bg-white/5",
+                    active ? "bg-[var(--surface-2)]" : "hover:bg-white/5 active:bg-white/5",
                   )}
                 >
                   {active ? <span className="absolute inset-y-3 left-0 w-1 rounded-full bg-[var(--accent)]" aria-hidden /> : null}
@@ -162,8 +184,14 @@ export function ConversationList({
                         </time>
                       ) : null}
                     </span>
-                    <span className={cx("mt-0.5 line-clamp-1 text-[13px]", row.at ? "text-[var(--muted)]" : "text-[var(--accent)]")}>
-                      {row.preview}
+                    <span
+                      className={cx(
+                        "mt-0.5 flex items-center gap-1 text-[13px]",
+                        row.at ? "text-[var(--muted)]" : "font-medium text-[var(--accent)]",
+                      )}
+                    >
+                      {photo ? <CameraIcon className="h-3.5 w-3.5 shrink-0" /> : null}
+                      <span className="line-clamp-1">{photo ? row.preview.slice("Photo:".length).trim() || "Photo" : row.preview}</span>
                     </span>
                   </span>
                 </Link>
@@ -172,7 +200,6 @@ export function ConversationList({
           })}
         </ul>
       );
-    }
   }
 
   return (
@@ -181,7 +208,7 @@ export function ConversationList({
         <Heading className="text-2xl font-bold tracking-tight text-[var(--ink)] lg:text-xl">
           <span className="text-[var(--accent)]">My</span> Chats
         </Heading>
-        {session ? (
+        {searchable ? (
           <label className="relative mt-3 block">
             <span className="sr-only">Search chats</span>
             <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)]" />

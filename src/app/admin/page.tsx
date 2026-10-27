@@ -3,8 +3,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
-import { Notice, solidDangerClass } from "@/components/account/account-ui";
-import { Chip, PageHeader, Panel, buttonClass, cx, inputClass } from "@/components/ui";
+import { Notice, SkeletonCard, solidDangerClass } from "@/components/account/account-ui";
+import { AdminIcon } from "@/components/icons";
+import {
+  ButtonLink,
+  Chip,
+  EmptyState,
+  PAGE_GUTTER,
+  PAGE_PAD_Y,
+  PageHeader,
+  buttonClass,
+  cx,
+  inputClass,
+} from "@/components/ui";
 import { useApi } from "@/lib/api";
 import type {
   AdminMediaDTO,
@@ -102,25 +113,43 @@ export default function AdminPage() {
 
   return (
     <AppShell>
-      <section className="mx-auto w-full max-w-6xl px-4 pb-12 pt-6 sm:px-6 sm:pt-8 lg:px-8">
+      <section className={cx("mx-auto w-full max-w-6xl", PAGE_GUTTER, PAGE_PAD_Y)}>
         <PageHeader accent="Trust" title="& safety" subtitle="Reports, the safety queue, users and generated media." />
         {!ready || (session && !me) ? (
-          <p className="mt-8 text-sm text-[var(--muted)]">Loading…</p>
+          <div className="mt-8 space-y-3" aria-busy="true" aria-label="Loading">
+            <SkeletonCard lines={3} />
+            <SkeletonCard lines={3} />
+          </div>
         ) : !me?.isAdmin ? (
-          <Panel className="mt-8 p-6">
-            <p className="text-[var(--muted)]">This page is for Simulust admins. Sign in with an admin account.</p>
-          </Panel>
+          <div className="mt-8">
+            <EmptyState
+              icon={<AdminIcon className="h-7 w-7" />}
+              title="Admins only"
+              body="Sign in with an admin account to see reports and the safety queue."
+              action={
+                <ButtonLink href="/" variant="secondary">
+                  Back to home
+                </ButtonLink>
+              }
+            />
+          </div>
         ) : (
           <>
-            <div className="no-scrollbar -mx-4 mt-6 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:px-0" role="tablist">
+            <div
+              className="no-scrollbar -mx-4 mt-6 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:px-0"
+              role="tablist"
+              aria-label="Admin sections"
+            >
               {TABS.map((item) => (
                 <button
                   key={item.id}
+                  id={`admin-tab-${item.id}`}
                   type="button"
                   role="tab"
                   aria-selected={tab === item.id}
+                  aria-controls="admin-panel"
                   className={cx(
-                    "inline-flex h-10 shrink-0 items-center rounded-full px-4 text-sm font-semibold transition-colors",
+                    "inline-flex h-10 shrink-0 items-center rounded-full px-4 text-sm font-semibold transition-[background-color,color,transform] duration-150 active:scale-[0.97] motion-reduce:active:scale-100",
                     tab === item.id
                       ? "bg-[var(--accent)] text-[var(--accent-ink)]"
                       : "border border-[var(--line)] bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--ink)]",
@@ -131,7 +160,7 @@ export default function AdminPage() {
                 </button>
               ))}
             </div>
-            <div className="mt-6">
+            <div id="admin-panel" role="tabpanel" aria-labelledby={`admin-tab-${tab}`} className="mt-6">
               {tab === "reports" ? <ReportsTab /> : null}
               {tab === "queue" ? (
                 <QueueTab
@@ -162,7 +191,15 @@ function ListState({ loading, error, empty, onRetry }: { loading: boolean; error
       </div>
     );
   }
-  if (loading && empty) return <p className="text-sm text-[var(--muted)]">Loading…</p>;
+  if (loading && empty) {
+    return (
+      <div className="space-y-3" aria-busy="true" aria-label="Loading">
+        <SkeletonCard lines={3} />
+        <SkeletonCard lines={3} />
+        <SkeletonCard lines={3} />
+      </div>
+    );
+  }
   return null;
 }
 
@@ -188,7 +225,7 @@ function ReportsTab() {
       <div className="mt-4 space-y-3">
         <ListState loading={list.loading} error={list.error} empty={!list.items} onRetry={() => void list.reload()} />
         {list.items && !reports.length ? (
-          <p className="text-sm text-[var(--muted)]">{view === "open" ? "No open reports." : "Nothing resolved yet."}</p>
+          <EmptyState title={view === "open" ? "No open reports" : "Nothing resolved yet"} />
         ) : null}
         {reports.map((report) => (
           <ReportCard
@@ -472,7 +509,7 @@ function QueueTab({ onOpenUser }: { onOpenUser: (userId: string) => void }) {
       ) : null}
       <div className="mt-4 space-y-3">
         <ListState loading={list.loading} error={list.error} empty={!list.items} onRetry={() => void list.reload()} />
-        {list.items && !events.length ? <p className="text-sm text-[var(--muted)]">The queue is empty.</p> : null}
+        {list.items && !events.length ? <EmptyState title="Queue is clear" body="The queue is empty." /> : null}
         {events.map((event) => (
           <article key={event.id} className={cx(card, "border-[var(--line)] bg-[var(--surface)]")}>
             <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -556,7 +593,7 @@ function UsersTab({ initialQuery }: { initialQuery: string }) {
       </form>
       <div className="mt-4 space-y-3">
         <ListState loading={list.loading} error={list.error} empty={!list.items} onRetry={() => void list.reload()} />
-        {list.items && !users.length ? <p className="text-sm text-[var(--muted)]">No users match.</p> : null}
+        {list.items && !users.length ? <EmptyState title="No users match" /> : null}
         {users.map((user) => (
           <UserRow
             key={user.id}
@@ -668,7 +705,7 @@ function MediaTab() {
       </div>
       <div className="mt-4">
         <ListState loading={list.loading} error={list.error} empty={!list.items} onRetry={() => void list.reload()} />
-        {list.items && !media.length ? <p className="text-sm text-[var(--muted)]">No generated media yet.</p> : null}
+        {list.items && !media.length ? <EmptyState title="No generated media yet" /> : null}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {media.map((item) => (
             <article key={item.id} className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)]">

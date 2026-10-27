@@ -1,14 +1,18 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { AppShell } from "@/components/app-shell";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { AppShell, useLane } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
 import { BrainIcon, ChatIcon, MoreIcon, PlusIcon } from "@/components/icons";
-import { Button, ButtonLink, CharacterCard, EmptyState, PageHeader, cx } from "@/components/ui";
-import { GRID, GridSkeleton } from "@/components/home/browse";
-import { PAGE, isOwnCharacter, useCatalogue } from "@/components/home/catalogue";
+import { Badge, Button, ButtonLink, EmptyState, PageHeader, cx, isStaticArt } from "@/components/ui";
+import { FOCUS_RING, GRID, GridSkeleton } from "@/components/home/browse";
+import { PAGE, PAGE_STACK, isOwnCharacter, relativeTime, useCatalogue } from "@/components/home/catalogue";
+import { CreatePromo } from "@/components/home/home-sections";
 import { LoginPrompt, RetryPanel } from "@/components/home/login-prompt";
+import { PortraitCard } from "@/components/home/portrait-card";
+import { threadsByCharacter, useThreads } from "@/components/home/threads";
 import { ApiError, useApi } from "@/lib/api";
 import type { Character } from "@/lib/characters";
 
@@ -24,7 +28,7 @@ function CreateCard() {
   return (
     <Link
       href="/create"
-      className="group flex aspect-[3/4] flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-[var(--accent)]/40 bg-[var(--accent-soft)] p-4 text-center transition hover:border-[var(--accent)] hover:bg-[var(--accent)]/20"
+      className="group flex aspect-[3/4] flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-[var(--accent)]/40 bg-[var(--accent-soft)] p-4 text-center outline-none transition hover:border-[var(--accent)] hover:bg-[var(--accent)]/20 focus-visible:border-[var(--accent)] focus-visible:bg-[var(--accent)]/20"
     >
       <span className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--accent)] text-[var(--accent-ink)] shadow-[0_8px_24px_rgba(255,79,139,0.4)] transition group-hover:scale-105">
         <PlusIcon className="h-7 w-7" />
@@ -85,7 +89,7 @@ function CardMenu({ person, onDelete }: { person: Character; onDelete: () => voi
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur transition hover:bg-black/75"
+        className={cx("flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur transition hover:bg-black/75", FOCUS_RING)}
       >
         <MoreIcon />
       </button>
@@ -96,7 +100,7 @@ function CardMenu({ person, onDelete }: { person: Character; onDelete: () => voi
           role="menu"
           aria-label={person.name}
           onKeyDown={onMenuKey}
-          className="absolute right-0 top-12 w-48 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.55)]"
+          className="absolute right-0 top-12 w-48 origin-top-right rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.55)] transition-[opacity,transform] duration-150 ease-out starting:scale-95 starting:opacity-0 motion-reduce:transition-none"
         >
           <Link role="menuitem" href={`/date/${person.id}`} className={MENU_ITEM}>
             <ChatIcon className="h-4 w-4 text-[var(--muted)]" />
@@ -165,12 +169,20 @@ function DeleteDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={bodyId}>
-      <button type="button" aria-label="Close" tabIndex={-1} className="absolute inset-0 bg-black/70" onClick={busy ? undefined : onCancel} />
-      <div className="relative w-full max-w-sm rounded-2xl border border-[var(--line)] bg-[var(--bg-2)] p-6 shadow-[0_24px_60px_rgba(0,0,0,0.6)]">
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:items-center" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={bodyId}>
+      <button
+        type="button"
+        aria-label="Close"
+        tabIndex={-1}
+        className="absolute inset-0 bg-black/70 transition-opacity duration-200 starting:opacity-0"
+        onClick={busy ? undefined : onCancel}
+      />
+      <div className="relative w-full max-w-sm rounded-2xl border border-[var(--line)] bg-[var(--bg-2)] p-6 shadow-[0_24px_60px_rgba(0,0,0,0.6)] transition-[opacity,transform] duration-200 ease-out starting:translate-y-4 starting:opacity-0 motion-reduce:transition-none sm:starting:translate-y-0 sm:starting:scale-95">
         <div className="flex items-center gap-3">
-          <span className="h-14 w-14 shrink-0 overflow-hidden rounded-xl" style={{ background: person.color }}>
-            {person.image ? <img src={person.image} alt="" className="h-full w-full object-cover object-top" /> : null}
+          <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl" style={{ background: person.color }}>
+            {person.image ? (
+              <Image src={person.image} alt="" fill sizes="56px" unoptimized={!isStaticArt(person.image)} className="object-cover object-top" />
+            ) : null}
           </span>
           <h2 id={titleId} className="text-lg font-bold tracking-tight text-[var(--ink)]">
             Delete {person.name}?
@@ -199,9 +211,13 @@ function DeleteDialog({
 
 function MyAI() {
   const { ready, session } = useSession();
+  const { lane } = useLane();
   const { characters, status, error, retry, remove } = useCatalogue();
+  const { threads } = useThreads();
+  const chats = useMemo(() => threadsByCharacter(threads), [threads]);
   const [deleting, setDeleting] = useState<Character | null>(null);
   const own = characters.filter(isOwnCharacter);
+  const signedIn = ready && Boolean(session);
 
   let body;
   if (!ready || (session && status === "loading")) {
@@ -232,27 +248,46 @@ function MyAI() {
   } else {
     body = (
       <ul className={GRID} aria-label="Your characters">
-        <li>
+        {/* Phones have no room for the header button; the card leads instead. */}
+        <li className="sm:hidden">
           <CreateCard />
         </li>
-        {own.map((person) => (
-          <li key={person.id} className="relative">
-            <CharacterCard person={person} />
-            <CardMenu person={person} onDelete={() => setDeleting(person)} />
-          </li>
-        ))}
+        {own.map((person, index) => {
+          const thread = chats.get(person.id);
+          return (
+            <li key={person.id} className="relative">
+              <PortraitCard
+                person={person}
+                eager={index < 6}
+                badge={thread ? <Badge tone="muted">Chatting</Badge> : null}
+                meta={thread ? `Last chat ${relativeTime(thread.lastMessageAt)}` : "No chats yet"}
+              />
+              <CardMenu person={person} onDelete={() => setDeleting(person)} />
+            </li>
+          );
+        })}
       </ul>
     );
   }
 
   return (
-    <div className={`${PAGE} flex flex-col gap-6 pb-10 pt-6 sm:pt-8`}>
+    <div className={cx(PAGE, PAGE_STACK)}>
       <PageHeader
         accent="My"
         title="AI"
-        subtitle="The characters you created. Only you can see them. Tap one to chat, or open the menu for memories."
+        subtitle="The characters you created. Only you can see them. Open one to chat, or use ⋯ for memories."
+        action={
+          signedIn && own.length > 0 ? (
+            <ButtonLink href="/create" className="max-sm:hidden">
+              <PlusIcon className="h-4 w-4" />
+              Create character
+            </ButtonLink>
+          ) : null
+        }
       />
       {body}
+      {/* A short list leaves the page bare; the band fills it with the next step. */}
+      {signedIn && status === "ready" && own.length > 0 && own.length < 4 ? <CreatePromo lane={lane} /> : null}
       {deleting ? (
         <DeleteDialog
           person={deleting}

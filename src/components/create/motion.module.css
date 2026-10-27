@@ -1,0 +1,183 @@
+/* The creator's motion. Kept here rather than in globals.css, which belongs to
+   the app shell; every animation stops for people who ask for reduced motion. */
+
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+/* A tile's placeholder while its picture loads. */
+.shimmer {
+  background-image: linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--step-dx, 16px));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* A new step slides in from the side it came from. */
+.step {
+  animation: step-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.step[data-dir="back"] {
+  --step-dx: -16px;
+}
+
+@keyframes pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* The check on a picked tile. */
+.pop {
+  animation: pop 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.fade {
+  animation: fade-in 250ms ease-out both;
+}
+
+@keyframes portrait-in {
+  from {
+    opacity: 0;
+    transform: scale(1.03);
+    filter: blur(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+/* The finished portrait arrives out of a blur. */
+.reveal {
+  animation: portrait-in 500ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes drift {
+  from {
+    transform: scale(1.1);
+  }
+  to {
+    transform: scale(1.15);
+  }
+}
+
+.drift {
+  transform: scale(1.1);
+  animation: drift 6s ease-in-out infinite alternate;
+}
+
+/* A light band sweeping across the card while the portrait is drawn. */
+.sweep {
+  background-image: linear-gradient(
+    110deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.07) 45%,
+    rgba(255, 122, 166, 0.12) 50%,
+    rgba(255, 255, 255, 0.07) 55%,
+    transparent 70%
+  );
+  background-size: 250% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+@keyframes slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(260%);
+  }
+}
+
+/* An indeterminate progress bar. */
+.bar {
+  width: 40%;
+  animation: slide 1.4s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: rise 300ms ease-out both;
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.sheet {
+  animation: sheet-up 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer,
+  .step,
+  .pop,
+  .fade,
+  .reveal,
+  .drift,
+  .sweep,
+  .bar,
+  .rise,
+  .sheet {
+    animation: none;
+  }
+
+  .sweep {
+    background-image: none;
+  }
+
+  .bar {
+    width: 100%;
+    opacity: 0.6;
+  }
+}

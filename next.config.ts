@@ -22,6 +22,18 @@ export default function config(phase: string): NextConfig {
     reactStrictMode: false,
     // PGlite ships WASM and data files that must be loaded from node_modules at runtime.
     serverExternalPackages: ["@electric-sql/pglite", "@electric-sql/pglite-pgvector"],
+    images: {
+      // AVIF first (smallest), WebP where it isn't supported.
+      formats: ["image/avif", "image/webp"],
+      // Only our own static art is resized. Generated media (/api/media/...)
+      // needs the viewer's login, which the optimizer doesn't have, so it is
+      // shown as is (unoptimized).
+      localPatterns: [
+        { pathname: "/characters/**", search: "" },
+        { pathname: "/hero/**", search: "" },
+        { pathname: "/creator/**", search: "" },
+      ],
+    },
   };
   if (phase !== PHASE_PRODUCTION_BUILD) return nextConfig;
 

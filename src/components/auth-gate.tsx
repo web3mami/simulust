@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useEffectEvent, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
 import { CloseIcon, HeartIcon, LockIcon } from "@/components/icons";
@@ -38,8 +38,10 @@ export function useSession() {
   return value;
 }
 
-// Loads /api/me whenever the signed-in identity changes.
-function useMe(identity: string | null, getToken: () => Promise<string | null>) {
+// Loads /api/me whenever the signed-in identity changes. Waits until the login
+// provider is ready, so a hard load asks once instead of once signed out and
+// again signed in.
+function useMe(identity: string | null, getToken: () => Promise<string | null>, ready: boolean) {
   const [me, setMe] = useState<Me | null>(null);
   const [features, setFeatures] = useState<Features | null>(null);
   const [suspended, setSuspended] = useState<Suspension>(false);
@@ -64,26 +66,86 @@ function useMe(identity: string | null, getToken: () => Promise<string | null>) 
   }, [getToken]);
 
   useEffect(() => {
-    // Fetch on mount and whenever the signed-in identity changes.
+    if (!ready) return;
+    // Fetch once ready and whenever the signed-in identity changes.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refreshMe();
-  }, [identity, refreshMe]);
+  }, [ready, identity, refreshMe]);
 
   return { me: identity ? me : null, features, suspension: identity ? suspended : false, refreshMe };
 }
 
 type Suspension = false | "policy" | "age_locked";
 
+// What every modal here does while open: the page behind stops scrolling,
+// focus moves in (to the control marked data-autofocus, else the panel) and Tab stays
+// inside, Escape closes it if it can be closed, and focus goes back to
+// whatever opened it.
+function useModal(open: boolean, onClose?: () => void) {
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useEffectEvent(() => onClose?.());
+  const closable = Boolean(onClose);
+
+  useEffect(() => {
+    if (!open) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const root = document.documentElement;
+    const overflow = root.style.overflow;
+    root.style.overflow = "hidden";
+    const start = panel.current?.querySelector<HTMLElement>("[data-autofocus]") ?? panel.current;
+    start?.focus({ preventScroll: true });
+
+    function onKey(event: KeyboardEvent) {
+      const box = panel.current;
+      if (!box) return;
+      // Keys inside another layer on top (the sign-in provider's own window) are its business.
+      const inside = box.contains(event.target as Node) || event.target === document.body;
+      if (event.key === "Escape" && closable && inside) {
+        event.preventDefault();
+        close();
+      } else if (event.key === "Tab" && inside) {
+        const focusable = Array.from(
+          box.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), textarea, select, [tabindex]:not([tabindex="-1"])'),
+        );
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === box)) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      root.style.overflow = overflow;
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, [open, closable]);
+
+  return panel;
+}
+
 function SuspendedNotice({ reason, onSignOut }: { reason: Exclude<Suspension, false>; onSignOut: () => void }) {
+  // No way to dismiss it: only focus and scroll are handled.
+  const panel = useModal(true);
   return (
     <div
-      className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-sm"
+      className="animate-fade-in fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-sm"
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="suspended-title"
     >
       <div className="flex min-h-full items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-3xl border border-[var(--line)] bg-[var(--bg-2)] p-6 text-[var(--ink)] shadow-[0_30px_80px_rgba(0,0,0,0.6)] sm:p-8">
+        <div
+          ref={panel}
+          tabIndex={-1}
+          className="animate-modal-in w-full max-w-md rounded-3xl border border-[var(--line)] bg-[var(--bg-2)] p-6 text-[var(--ink)] shadow-[0_30px_80px_rgba(0,0,0,0.6)] outline-none sm:p-8"
+        >
           <span aria-hidden className="flex h-12 w-12 items-center justify-center rounded-full bg-red-500/15 text-red-300">
             <LockIcon className="h-6 w-6" />
           </span>
@@ -120,7 +182,7 @@ function SuspendedNotice({ reason, onSignOut }: { reason: Exclude<Suspension, fa
               Content policy
             </a>
             <button type="button" onClick={onSignOut} className={buttonClass("primary", "lg", "flex-1")}>
-              Sign out
+              Log out
             </button>
           </div>
         </div>
@@ -140,20 +202,29 @@ function LoginModal({
   intent: AuthIntent;
   onClose: () => void;
 }) {
+  const panel = useModal(open, onClose);
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 overflow-y-auto bg-black/75 backdrop-blur-sm"
+      className="animate-fade-in fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/75 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-labelledby="login-title"
     >
-      <div className="flex min-h-full items-center justify-center p-3 sm:p-6">
-        <div className="relative w-full max-w-[880px] overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--bg-2)] shadow-[0_30px_80px_rgba(0,0,0,0.6)]">
+      {/* A press on the dimmed area around the panel closes it. */}
+      <div
+        className="flex min-h-full items-center justify-center p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] sm:p-6"
+        onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+      >
+        <div
+          ref={panel}
+          tabIndex={-1}
+          className="animate-modal-in relative w-full max-w-[880px] overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--bg-2)] shadow-[0_30px_80px_rgba(0,0,0,0.6)] outline-none"
+        >
           <button
             type="button"
             aria-label="Close"
-            className="absolute right-3 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur transition-colors hover:bg-black/70"
+            className="absolute right-3 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur transition-[background-color,transform] hover:bg-black/70 active:scale-95 motion-reduce:active:scale-100"
             onClick={onClose}
           >
             <CloseIcon />
@@ -174,7 +245,7 @@ function PrivyAuthProvider({ children }: { children: React.ReactNode }) {
 
   const session = ready && authenticated && user ? sessionFromPrivyUser(user) : null;
   const getToken = useCallback(async () => (authenticated ? getAccessToken() : null), [authenticated, getAccessToken]);
-  const { me, features, suspension, refreshMe } = useMe(session ? user!.id : null, getToken);
+  const { me, features, suspension, refreshMe } = useMe(session ? user!.id : null, getToken, ready);
 
   useEffect(() => {
     if (!ready || !session) return;
@@ -252,7 +323,7 @@ function DevAuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const getToken = useCallback(async () => null, []);
-  const { me, features, suspension, refreshMe } = useMe(handle, getToken);
+  const { me, features, suspension, refreshMe } = useMe(handle, getToken, ready);
   const session: Session | null = handle ? { provider: "email", display: handle, detail: `dev:${handle}` } : null;
 
   function devSignOut() {

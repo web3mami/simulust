@@ -1,4 +1,5 @@
-import { cx } from "@/components/ui";
+import Image from "next/image";
+import { cx, isStaticArt } from "@/components/ui";
 import type { CharacterDTO } from "@/lib/api-types";
 
 const SIZES = {
@@ -7,6 +8,9 @@ const SIZES = {
   lg: "h-12 w-12 text-base",
   xl: "h-20 w-20 text-2xl",
 } as const;
+
+// What next/image should fetch for each size, so a 32px avatar isn't a 250KB portrait.
+const PIXELS = { sm: "32px", md: "40px", lg: "48px", xl: "80px" } as const;
 
 // A round character portrait; falls back to their colour and initial.
 export function Avatar({
@@ -29,7 +33,14 @@ export function Avatar({
       aria-hidden
     >
       {person.image ? (
-        <img src={person.image} alt="" className="absolute inset-0 h-full w-full object-cover object-top" />
+        <Image
+          src={person.image}
+          alt=""
+          fill
+          sizes={PIXELS[size]}
+          unoptimized={!isStaticArt(person.image)}
+          className="object-cover object-top"
+        />
       ) : (
         person.name.slice(0, 1)
       )}

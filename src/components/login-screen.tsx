@@ -1,8 +1,11 @@
 "use client";
 
+import Image, { getImageProps } from "next/image";
 import { useState } from "react";
+import { preload } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useLogin } from "@privy-io/react-auth";
+import { useLane } from "@/components/app-shell";
 import { writeDevUser } from "@/lib/dev-user";
 import { isPrivyConfigured } from "@/components/privy-app";
 import { sessionFromPrivyUser, type Session } from "@/lib/session";
@@ -15,14 +18,29 @@ type Props = {
   intent?: "login" | "signup";
 };
 
-// The picture beside the form (above it on phones).
-const PANEL_IMAGE = "/hero/hero-pair-girls.jpg";
+// The picture beside the form (above it on phones), matched to the lane the
+// visitor is browsing.
+function panelArt(lane?: string) {
+  return `/hero/hero-pair-${lane === "anime" || lane === "guys" ? lane : "girls"}.jpg`;
+}
+
+const PANEL_SIZES = "(min-width: 768px) 430px, 100vw";
+
+// Called when someone hovers or focuses Log in / Join, so the art is already
+// downloaded when the modal opens.
+export function preloadLoginArt(lane?: string) {
+  const { props } = getImageProps({ src: panelArt(lane), alt: "", fill: true, sizes: PANEL_SIZES });
+  preload(props.src, { as: "image", imageSrcSet: props.srcSet, imageSizes: props.sizes, fetchPriority: "high" });
+}
 
 const legalLink = "!text-[var(--ink)] underline underline-offset-2";
 
 // Picture on the left, form on the right, in the modal or as a full page.
 function Frame({ embedded, intent, children }: Props & { children: React.ReactNode }) {
-  const signup = intent === "signup";
+  const { lane } = useLane();
+  // Both options sign in or create an account, so the switch only changes the wording.
+  const [mode, setMode] = useState<"login" | "signup">(intent ?? "login");
+  const signup = mode === "signup";
   const card = (
     <div
       className={cx(
@@ -32,34 +50,58 @@ function Frame({ embedded, intent, children }: Props & { children: React.ReactNo
           : "w-full max-w-[880px] overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--bg-2)] shadow-[0_30px_80px_rgba(0,0,0,0.6)]",
       )}
     >
-      <div className="relative h-36 overflow-hidden sm:h-44 md:h-auto md:min-h-[580px]">
-        <img
-          src={PANEL_IMAGE}
+      <div className="relative h-52 overflow-hidden bg-[var(--surface)] sm:h-60 md:h-auto md:min-h-[600px]">
+        <Image
+          src={panelArt(lane)}
           alt=""
-          className="absolute inset-0 h-full w-full object-cover object-[50%_40%] md:object-center"
+          fill
+          sizes={PANEL_SIZES}
+          loading="eager"
+          fetchPriority="high"
+          className="object-cover object-[50%_18%] md:object-center"
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-[var(--bg-2)] via-black/20 to-black/10 md:from-black/90 md:via-black/25 md:to-black/0" />
-        <div className="absolute inset-x-0 bottom-0 hidden p-8 md:block">
-          <p className="text-[28px] font-bold leading-tight tracking-tight text-white">
+        <div className="absolute inset-0 bg-gradient-to-t from-[var(--bg-2)] via-black/30 to-black/5 md:from-black/90 md:via-black/25 md:to-black/0" />
+        <div className="absolute inset-x-0 bottom-0 p-5 md:p-8">
+          <p className="text-xl font-bold leading-tight tracking-tight text-white md:text-[28px]">
             Meet an AI that <span className="text-[var(--accent)]">actually</span> remembers you.
           </p>
-          <p className="mt-2 text-sm leading-6 text-white/75">
+          <p className="mt-1.5 text-xs leading-5 text-white/75 md:mt-2 md:text-sm md:leading-6">
             Every character is a fictional adult and every image is AI-generated.
           </p>
         </div>
       </div>
-      <div className="flex flex-col justify-center px-6 pb-8 pt-2 sm:px-10 md:py-12">
-        <p className="text-xl font-extrabold tracking-tight">
+      <div className="flex flex-col justify-center px-5 pb-7 pt-3 sm:px-10 md:py-12">
+        <p className="hidden text-xl font-extrabold tracking-tight md:block">
           simu<span className="text-[var(--accent)]">lust</span>
         </p>
-        <h1 id="login-title" className="mt-4 text-3xl font-bold leading-tight tracking-tight">
-          {signup ? "Sign up" : "Log in"}
+        <div
+          role="group"
+          aria-label="Sign up or log in"
+          className="grid grid-cols-2 gap-1 rounded-full border border-[var(--line)] bg-[var(--surface)] p-1 md:mt-5"
+        >
+          {(["signup", "login"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={mode === option}
+              onClick={() => setMode(option)}
+              className={cx(
+                "h-9 rounded-full text-sm font-semibold transition-[background-color,color] duration-150",
+                mode === option ? "bg-[var(--accent)] text-[var(--accent-ink)]" : "text-[var(--muted)] hover:text-[var(--ink)]",
+              )}
+            >
+              {option === "signup" ? "Sign up" : "Log in"}
+            </button>
+          ))}
+        </div>
+        <h1 id="login-title" className="mt-5 text-2xl font-bold leading-tight tracking-tight md:text-3xl">
+          {signup ? "Join Simulust" : "Welcome back"}
         </h1>
         <p className="mt-1.5 text-sm leading-6 text-[var(--muted)]">
-          {signup ? "Create your free account and start chatting." : "Welcome back. Pick up where you left off."}
+          {signup ? "Create your free account and start chatting." : "Pick up where you left off."}
         </p>
         {children}
-        <p className="mt-5 text-center text-xs leading-5 text-[var(--muted)]">
+        <p className="mt-4 text-center text-xs leading-5 text-[var(--muted)]">
           {signup
             ? "Already have an account? The same options log you in."
             : "New here? The same options create your free account."}
@@ -101,9 +143,11 @@ function PrivyLoginScreen({ onSignedIn, embedded = false, intent = "login" }: Pr
 
   return (
     <Frame embedded={embedded} intent={intent}>
-      <div className="mt-7 flex flex-col gap-3">
+      <div className="mt-6 flex flex-col gap-3">
         <button
           type="button"
+          // The modal opens with focus on its first action.
+          data-autofocus
           disabled={pending !== null}
           className={buttonClass("primary", "lg", "w-full")}
           onClick={() => start("email")}
@@ -162,7 +206,7 @@ function DevLoginScreen({ onSignedIn, embedded = false, intent = "login" }: Prop
   return (
     <Frame embedded={embedded} intent={intent}>
       <form
-        className="mt-7 flex flex-col gap-3"
+        className="mt-6 flex flex-col gap-3"
         onSubmit={(event) => {
           event.preventDefault();
           const clean = handle.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
@@ -181,6 +225,11 @@ function DevLoginScreen({ onSignedIn, embedded = false, intent = "login" }: Prop
           onChange={(event) => setHandle(event.target.value)}
           className={cx(inputClass, "h-12 text-base")}
           aria-label="Dev handle"
+          // The modal opens with focus on its first field.
+          data-autofocus
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
         />
         <button type="submit" className={buttonClass("primary", "lg", "w-full")}>
           Continue

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { SettingsIcon, ShieldIcon, UserIcon } from "@/components/icons";
-import { Panel, buttonClass, cx } from "@/components/ui";
+import { PAGE_GUTTER, PAGE_PAD_Y, Panel, buttonClass, cx } from "@/components/ui";
 import type { AgeStatus } from "@/lib/api-types";
 
 // Pieces shared by the account screens (profile, settings, verification,
@@ -13,8 +13,8 @@ import type { AgeStatus } from "@/lib/api-types";
 // Note: globals.css styles every <a> with `color: inherit` outside Tailwind's
 // layers, so text colours on links need the `!` modifier to apply.
 
-// Page frame for the account screens: same gutters as the rest of the app.
-export const ACCOUNT_PAGE = "mx-auto w-full max-w-5xl px-4 pb-12 pt-6 sm:px-6 sm:pt-8 lg:px-8";
+// Page frame for the account screens: same gutters and top padding as the rest of the app.
+export const ACCOUNT_PAGE = `mx-auto w-full max-w-5xl ${PAGE_GUTTER} ${PAGE_PAD_Y}`;
 
 export const fieldLabel = "block text-sm font-semibold text-[var(--ink)]";
 export const fieldHint = "mt-1.5 block text-xs leading-5 text-[var(--muted)]";
@@ -35,14 +35,17 @@ const ACCOUNT_LINKS = [
   { href: "/verify", label: "Age check", icon: <ShieldIcon className="h-4 w-4" /> },
 ];
 
-// Profile / Settings / Age verification, as a row of pills that scrolls
-// sideways on phones.
+// Profile / Settings / Age verification: a segmented control that fits a
+// phone's width, and a row of pills on wider screens.
 export function AccountNav({ className }: { className?: string }) {
   const pathname = usePathname();
   return (
     <nav
       aria-label="Account"
-      className={cx("no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:px-0", className)}
+      className={cx(
+        "grid grid-cols-3 gap-1 rounded-full border border-[var(--line)] bg-[var(--surface)] p-1 sm:flex sm:gap-2 sm:border-0 sm:bg-transparent sm:p-0",
+        className,
+      )}
     >
       {ACCOUNT_LINKS.map((link) => {
         const on = pathname === link.href || pathname.startsWith(`${link.href}/`);
@@ -52,10 +55,10 @@ export function AccountNav({ className }: { className?: string }) {
             href={link.href}
             aria-current={on ? "page" : undefined}
             className={cx(
-              "inline-flex h-10 shrink-0 items-center gap-2 rounded-full px-4 text-sm font-semibold transition-colors",
+              "inline-flex h-10 min-w-0 shrink-0 items-center justify-center gap-1.5 rounded-full border px-2 text-[13px] font-semibold transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:active:scale-100 sm:gap-2 sm:px-4 sm:text-sm",
               on
-                ? "bg-[var(--accent)] !text-[var(--accent-ink)]"
-                : "border border-[var(--line)] bg-[var(--surface)] !text-[var(--muted)] hover:border-white/25 hover:!text-[var(--ink)]",
+                ? "border-transparent bg-[var(--accent)] !text-[var(--accent-ink)]"
+                : "border-transparent bg-transparent !text-[var(--muted)] hover:!text-[var(--ink)] sm:border-[var(--line)] sm:bg-[var(--surface)] sm:hover:border-white/25",
             )}
           >
             {link.icon}
@@ -93,25 +96,39 @@ export function SectionCard({
         className,
       )}
     >
-      <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
+      {/* Icon, title and action share the first row; on phones the description
+          takes the card's full width below them instead of a narrow column. */}
+      <div
+        className={cx(
+          "grid items-center gap-x-3 sm:gap-x-4",
+          icon ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,1fr)_auto]",
+        )}
+      >
         {icon ? (
           <span
             aria-hidden
             className={cx(
-              "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
+              "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl sm:h-10 sm:w-10",
               tone === "danger" ? "bg-red-500/15 text-red-300" : "bg-[var(--accent-soft)] text-[var(--accent)]",
             )}
           >
             {icon}
           </span>
         ) : null}
-        <div className="min-w-0 flex-1">
-          <h2 className={cx("text-lg font-bold tracking-tight", tone === "danger" ? "text-red-200" : "text-[var(--ink)]")}>
-            {title}
-          </h2>
-          {description ? <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">{description}</p> : null}
-        </div>
-        {action ? <div className="shrink-0">{action}</div> : null}
+        <h2 className={cx("text-lg font-bold tracking-tight", tone === "danger" ? "text-red-200" : "text-[var(--ink)]")}>
+          {title}
+        </h2>
+        {action ? <div className="shrink-0 justify-self-end">{action}</div> : <span aria-hidden />}
+        {description ? (
+          <p
+            className={cx(
+              "mt-2 max-w-2xl text-sm leading-6 text-[var(--muted)] sm:mt-1",
+              icon ? "col-span-3 sm:col-span-1 sm:col-start-2" : "col-span-2 sm:col-span-1",
+            )}
+          >
+            {description}
+          </p>
+        ) : null}
       </div>
       {children ? <div className="mt-5">{children}</div> : null}
     </section>
@@ -132,16 +149,21 @@ export function SignInPrompt({
   onSignup?: () => void;
 }) {
   return (
-    <Panel className="flex flex-col items-center px-6 py-12 text-center">
+    <Panel className="relative flex flex-col items-center overflow-hidden px-6 py-12 text-center">
+      {/* A soft accent glow so the empty state doesn't read as an error. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(60%_100%_at_50%_0%,rgba(255,79,139,0.16),transparent_70%)]"
+      />
       <span
         aria-hidden
-        className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]"
+        className="relative flex h-14 w-14 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)] ring-1 ring-[var(--accent)]/25"
       >
         <UserIcon className="h-7 w-7" />
       </span>
-      <p className="mt-4 text-lg font-bold tracking-tight text-[var(--ink)]">{title}</p>
-      {body ? <p className="mt-2 max-w-sm text-sm leading-6 text-[var(--muted)]">{body}</p> : null}
-      <div className="mt-6 flex flex-wrap justify-center gap-3">
+      <p className="relative mt-4 text-lg font-bold tracking-tight text-[var(--ink)]">{title}</p>
+      {body ? <p className="relative mt-2 max-w-sm text-sm leading-6 text-[var(--muted)]">{body}</p> : null}
+      <div className="relative mt-6 flex flex-wrap justify-center gap-3">
         {onSignup ? (
           <button type="button" className={buttonClass("primary", "lg")} onClick={onSignup}>
             Sign up
@@ -159,10 +181,17 @@ export function SignInPrompt({
 export function SkeletonCard({ lines = 3, label }: { lines?: number; label?: string }) {
   return (
     <Panel className="p-5 sm:p-6" aria-busy="true" aria-label={label}>
-      <div className="h-5 w-40 animate-pulse rounded-full bg-white/[0.06]" />
+      <div className="flex items-center gap-3">
+        <div className="h-9 w-9 animate-pulse rounded-xl bg-white/[0.06] motion-reduce:animate-none sm:h-10 sm:w-10" />
+        <div className="h-5 w-40 animate-pulse rounded-full bg-white/[0.06] motion-reduce:animate-none" />
+      </div>
       <div className="mt-5 space-y-3">
         {Array.from({ length: lines }, (_, index) => (
-          <div key={index} className="h-4 animate-pulse rounded-full bg-white/[0.06]" style={{ width: `${90 - index * 15}%` }} />
+          <div
+            key={index}
+            className="h-4 animate-pulse rounded-full bg-white/[0.06] motion-reduce:animate-none"
+            style={{ width: `${90 - index * 15}%` }}
+          />
         ))}
       </div>
     </Panel>
@@ -178,7 +207,8 @@ export const AGE_STATUS_LABEL: Record<AgeStatus, string> = {
 
 const AGE_TONE: Record<AgeStatus, { pill: string; dot: string }> = {
   none: { pill: "bg-white/[0.07] text-[var(--muted)]", dot: "bg-white/40" },
-  pending: { pill: "bg-[var(--premium)]/15 text-[var(--premium)]", dot: "animate-pulse bg-[var(--premium)]" },
+  // Sky, not amber: amber means Premium and credits only.
+  pending: { pill: "bg-sky-400/15 text-sky-200", dot: "animate-pulse bg-sky-300 motion-reduce:animate-none" },
   approved: { pill: "bg-emerald-400/15 text-emerald-300", dot: "bg-emerald-400" },
   declined: { pill: "bg-red-500/15 text-red-300", dot: "bg-red-400" },
 };
@@ -213,7 +243,7 @@ export function Notice({
 }) {
   const tones = {
     error: "border-red-500/35 bg-red-500/10 text-red-200",
-    hold: "border-[var(--premium)]/40 bg-[var(--premium)]/10 text-[var(--premium)]",
+    hold: "border-sky-400/30 bg-sky-400/10 text-sky-100",
     info: "border-[var(--line)] bg-[var(--surface-2)] text-[var(--ink)]",
   };
   return (

@@ -38,6 +38,9 @@ export default function SettingsPage() {
   const api = useApi();
   const authHeaders = useAuthHeaders();
   const [saving, setSaving] = useState<SettingKey | null>(null);
+  // The switch moves the moment it's tapped; if the save fails it moves back
+  // and the error shows.
+  const [optimistic, setOptimistic] = useState<Partial<Record<SettingKey, boolean>>>({});
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -48,12 +51,18 @@ export default function SettingsPage() {
   async function toggle(key: SettingKey, value: boolean) {
     setSaving(key);
     setSettingsError(null);
+    setOptimistic((current) => ({ ...current, [key]: value }));
     try {
       await api<{ me: Me }>("/api/me", { method: "PATCH", json: { settings: { [key]: value } } });
       await refreshMe();
     } catch (caught) {
       setSettingsError(caught instanceof Error ? caught.message : "That didn't save. Try again.");
     } finally {
+      setOptimistic((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
       setSaving(null);
     }
   }
@@ -155,7 +164,7 @@ export default function SettingsPage() {
               control={
                 <Toggle
                   label="Explicit content"
-                  on={me.settings.explicit}
+                  on={optimistic.explicit ?? me.settings.explicit}
                   disabled={!me.ageVerified || saving !== null}
                   busy={saving === "explicit"}
                   onChange={(value) => toggle("explicit", value)}
@@ -168,7 +177,7 @@ export default function SettingsPage() {
               control={
                 <Toggle
                   label="Photos and voice notes without asking"
-                  on={me.settings.unpromptedMedia}
+                  on={optimistic.unpromptedMedia ?? me.settings.unpromptedMedia}
                   disabled={saving !== null}
                   busy={saving === "unpromptedMedia"}
                   onChange={(value) => toggle("unpromptedMedia", value)}
@@ -232,13 +241,17 @@ export default function SettingsPage() {
               value={confirmText}
               onChange={(event) => setConfirmText(event.target.value)}
               autoComplete="off"
-              className={cx(inputClass, "mt-2 h-11 focus:border-red-400")}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="done"
+              className={cx(inputClass, "mt-2 h-11 font-semibold tracking-wide focus:border-red-400")}
             />
           </label>
           <button
             type="button"
             disabled={confirmText !== "DELETE" || deleting}
-            className={solidDangerClass("md", "mt-4")}
+            className={solidDangerClass("md", "mt-4 w-full sm:w-auto")}
             onClick={deleteAccount}
           >
             {deleting ? "Deleting…" : "Delete my account"}
@@ -311,9 +324,9 @@ function Toggle({
       >
         <span
           className={cx(
-            "absolute left-0 top-1 h-5 w-5 rounded-full bg-white shadow transition-transform",
+            "absolute left-0 top-1 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ease-[cubic-bezier(.2,.8,.2,1)] motion-reduce:transition-none",
             on ? "translate-x-6" : "translate-x-1",
-            busy && "animate-pulse",
+            busy && "animate-pulse motion-reduce:animate-none",
           )}
         />
       </span>

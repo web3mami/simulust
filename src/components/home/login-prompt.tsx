@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import type { ReactNode } from "react";
 import { useSession } from "@/components/auth-gate";
 import { LockIcon } from "@/components/icons";
@@ -12,7 +13,13 @@ export function LoginPrompt({ title, body, image }: { title: string; body: React
     <Panel className="relative overflow-hidden">
       {image ? (
         <>
-          <img src={image} alt="" className="absolute inset-0 h-full w-full object-cover object-[70%_center] opacity-40" />
+          <Image
+            src={image}
+            alt=""
+            fill
+            sizes="(min-width: 1024px) 900px, 100vw"
+            className="object-cover object-[70%_center] opacity-40"
+          />
           <div className="absolute inset-0 bg-gradient-to-r from-[var(--surface)] via-[var(--surface)]/85 to-transparent" />
         </>
       ) : null}

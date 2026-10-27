@@ -116,18 +116,19 @@ export const EYE_COLORS: (Option<"eyeColor"> & { swatch: string })[] = [
   { id: "Amber", src: "/creator/eye-amber.jpg", swatch: "#c98a2b" },
 ];
 
-export const BODIES: Option<"body">[] = [
-  { id: "Petite", src: "/creator/body-petite.jpg" },
-  { id: "Athletic", src: "/creator/body-athletic.jpg" },
-  { id: "Curvy", src: "/creator/body-curvy.jpg" },
-  { id: "Thick", src: "/creator/body-thick.jpg" },
+// The art is head and shoulders, so each body type also says what it means.
+export const BODIES: (Option<"body"> & { detail: string })[] = [
+  { id: "Petite", src: "/creator/body-petite.jpg", detail: "Small and slim" },
+  { id: "Athletic", src: "/creator/body-athletic.jpg", detail: "Toned and fit" },
+  { id: "Curvy", src: "/creator/body-curvy.jpg", detail: "Full hips and bust" },
+  { id: "Thick", src: "/creator/body-thick.jpg", detail: "Soft and full-figured" },
 ];
 
-export const GUY_BODIES: Option<"body">[] = [
-  { id: "Slim", src: "/creator/body-guy-slim.jpg" },
-  { id: "Athletic", src: "/creator/body-guy-athletic.jpg" },
-  { id: "Muscular", src: "/creator/body-guy-muscular.jpg" },
-  { id: "Soft", src: "/creator/body-guy-soft.jpg" },
+export const GUY_BODIES: (Option<"body"> & { detail: string })[] = [
+  { id: "Slim", src: "/creator/body-guy-slim.jpg", detail: "Lean frame" },
+  { id: "Athletic", src: "/creator/body-guy-athletic.jpg", detail: "Toned and fit" },
+  { id: "Muscular", src: "/creator/body-guy-muscular.jpg", detail: "Big and built" },
+  { id: "Soft", src: "/creator/body-guy-soft.jpg", detail: "Broad and cuddly" },
 ];
 
 export const BREASTS: Option<"breast">[] = [
@@ -147,53 +148,38 @@ export const STYLE_CARDS: Record<Section, { id: Style; label: string; detail: st
   ],
 };
 
-// Frames the style cards cycle through, so each style shows a little movement.
+// Poses the style cards crossfade through, so each style shows a little
+// movement. Five each keeps the download small; the card's own picture is first.
 export const STYLE_FRAMES: Record<Section, Record<Style, string[]>> = {
   girls: {
     realistic: [
       "/creator/style-girl-realistic.jpg",
-      "/creator/flow-girl-real-1.jpg",
       "/creator/loop-girl-real-2.jpg",
-      "/creator/flow-girl-real-2.jpg",
       "/creator/loop-girl-real-3.jpg",
-      "/creator/flow-girl-real-3.jpg",
       "/creator/loop-girl-real-4.jpg",
-      "/creator/flow-girl-real-4.jpg",
       "/creator/loop-girl-real-5.jpg",
     ],
     anime: [
       "/creator/style-girl-anime.jpg",
-      "/creator/flow-girl-anime-1.jpg",
       "/creator/loop-girl-anime-2.jpg",
-      "/creator/flow-girl-anime-2.jpg",
       "/creator/loop-girl-anime-3.jpg",
-      "/creator/flow-girl-anime-3.jpg",
       "/creator/loop-girl-anime-4.jpg",
-      "/creator/flow-girl-anime-4.jpg",
       "/creator/loop-girl-anime-5.jpg",
     ],
   },
   guys: {
     realistic: [
       "/creator/style-guy-realistic.jpg",
-      "/creator/flow-guy-real-1.jpg",
       "/creator/loop-guy-real-2.jpg",
-      "/creator/flow-guy-real-2.jpg",
       "/creator/loop-guy-real-3.jpg",
-      "/creator/flow-guy-real-3.jpg",
       "/creator/loop-guy-real-4.jpg",
-      "/creator/flow-guy-real-4.jpg",
       "/creator/loop-guy-real-5.jpg",
     ],
     anime: [
       "/creator/style-guy-anime.jpg",
-      "/creator/flow-guy-anime-1.jpg",
       "/creator/loop-guy-anime-2.jpg",
-      "/creator/flow-guy-anime-2.jpg",
       "/creator/loop-guy-anime-3.jpg",
-      "/creator/flow-guy-anime-3.jpg",
       "/creator/loop-guy-anime-4.jpg",
-      "/creator/flow-guy-anime-4.jpg",
       "/creator/loop-guy-anime-5.jpg",
     ],
   },

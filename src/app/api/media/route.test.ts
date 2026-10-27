@@ -42,15 +42,17 @@ async function make(
     kind = "image",
     purpose = kind === "video" ? "video" : "chat",
     state = "ready",
+    characterId = "mira",
   }: {
     kind?: "image" | "video" | "audio";
     purpose?: "chat" | "video" | "voice" | "portrait";
     state?: "ready" | "pending" | "blocked" | "failed";
+    characterId?: string;
   } = {},
 ) {
   const user = await userFor(handle);
   const threadId = crypto.randomUUID();
-  let row = await media.createMedia({ userId: user.id, characterId: "mira", threadId, kind, purpose });
+  let row = await media.createMedia({ userId: user.id, characterId, threadId, kind, purpose });
   if (state !== "pending") {
     const mime = kind === "video" ? "video/mp4" : kind === "audio" ? "audio/mpeg" : "image/png";
     row = await media.storeMedia(row, BYTES, mime);
@@ -112,6 +114,13 @@ describe("GET /api/media", () => {
     const video = await make("gallery-c", 2, { kind: "video" });
     expect((await list("gallery-c", "?kind=image")).body.media.map((item) => item.id)).toEqual([photo.id]);
     expect((await list("gallery-c", "?kind=video")).body.media.map((item) => item.id)).toEqual([video.id]);
+  });
+
+  it("filters by character", async () => {
+    const mira = await make("gallery-f", 1);
+    const yuki = await make("gallery-f", 2, { characterId: "yuki" });
+    expect((await list("gallery-f", "?characterId=mira")).body.media.map((item) => item.id)).toEqual([mira.id]);
+    expect((await list("gallery-f", "?characterId=yuki&kind=image")).body.media.map((item) => item.id)).toEqual([yuki.id]);
   });
 
   it("pages with a before cursor", async () => {

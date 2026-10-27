@@ -4,9 +4,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cx } from "@/components/ui";
 import { useAuthHeaders } from "@/lib/api";
 
-// /api/media URLs authenticate with the session cookie. If the browser didn't
+// Generated media isn't resized by next/image (it needs the viewer's login), so
+// this is a plain img. /api/media URLs authenticate with the session cookie. If the browser didn't
 // send one, fetch the image with the bearer token instead.
-export function MediaImage({ url, alt = "", className }: { url: string; alt?: string; className: string }) {
+export function MediaImage({
+  url,
+  alt = "",
+  className,
+  onShown,
+}: {
+  url: string;
+  alt?: string;
+  className: string;
+  // Once there's something to show: the picture, or the note that it failed.
+  onShown?: () => void;
+}) {
   const authHeaders = useAuthHeaders();
   const [src, setSrc] = useState(url);
   const [failed, setFailed] = useState(false);
@@ -20,6 +32,7 @@ export function MediaImage({ url, alt = "", className }: { url: string; alt?: st
   const retry = useCallback(async () => {
     if (retried.current) {
       setFailed(true);
+      onShown?.();
       return;
     }
     retried.current = true;
@@ -29,8 +42,9 @@ export function MediaImage({ url, alt = "", className }: { url: string; alt?: st
       setSrc(URL.createObjectURL(await response.blob()));
     } catch {
       setFailed(true);
+      onShown?.();
     }
-  }, [url, authHeaders]);
+  }, [url, authHeaders, onShown]);
 
   if (failed) {
     return (
@@ -44,5 +58,6 @@ export function MediaImage({ url, alt = "", className }: { url: string; alt?: st
       </div>
     );
   }
-  return <img src={src} alt={alt} className={className} onError={() => void retry()} />;
+  // eslint-disable-next-line @next/next/no-img-element -- needs the viewer's login, see above
+  return <img src={src} alt={alt} className={className} onLoad={onShown} onError={() => void retry()} />;
 }

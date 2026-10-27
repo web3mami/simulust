@@ -106,46 +106,10 @@ export default function ReportPage() {
           }
         />
 
+        {/* The form comes first in the page, so phones reach it without scrolling
+            past the policy summary; on wide screens the summary sits beside it. */}
         <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-          <aside className="space-y-4 lg:sticky lg:top-24 lg:order-2">
-            <SectionCard title="What happens next" icon={<ShieldIcon />}>
-              <ul className="space-y-4 text-sm leading-6 text-[var(--muted)]">
-                <li className="flex gap-3">
-                  <span aria-hidden className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />
-                  <span>
-                    <strong className="text-[var(--ink)]">Intimate images shared without consent</strong> are removed within
-                    48 hours of a valid request, as the TAKE IT DOWN Act requires. We also remove copies we can find.
-                  </span>
-                </li>
-                <li className="flex gap-3">
-                  <span aria-hidden className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />
-                  <span>
-                    <strong className="text-[var(--ink)]">Child sexual abuse material</strong> is removed, the account is
-                    closed, and we report it to the National Center for Missing &amp; Exploited Children (NCMEC). You can
-                    also report directly to NCMEC at{" "}
-                    <a
-                      href="https://report.cybertip.org"
-                      className="!text-[var(--accent)] underline underline-offset-2"
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      report.cybertip.org
-                    </a>{" "}
-                    or 1-800-843-5678.
-                  </span>
-                </li>
-                <li className="flex gap-3">
-                  <span aria-hidden className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />
-                  <span>Everything else is reviewed within 48 hours.</span>
-                </li>
-              </ul>
-            </SectionCard>
-            <p className="hidden px-1 text-xs leading-5 text-[var(--muted)] lg:block">
-              <EmergencyNote />
-            </p>
-          </aside>
-
-          <div className="min-w-0 lg:order-1">
+          <div className="min-w-0">
             {dueAt ? (
               <Panel className="flex flex-col items-start p-6 sm:p-8">
                 <span
@@ -304,6 +268,43 @@ export default function ReportPage() {
               </form>
             )}
           </div>
+          <aside className="space-y-4 lg:sticky lg:top-24">
+            <SectionCard title="What happens next" icon={<ShieldIcon />}>
+              <ul className="space-y-4 text-sm leading-6 text-[var(--muted)]">
+                <li className="flex gap-3">
+                  <span aria-hidden className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />
+                  <span>
+                    <strong className="text-[var(--ink)]">Intimate images shared without consent</strong> are removed within
+                    48 hours of a valid request, as the TAKE IT DOWN Act requires. We also remove copies we can find.
+                  </span>
+                </li>
+                <li className="flex gap-3">
+                  <span aria-hidden className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />
+                  <span>
+                    <strong className="text-[var(--ink)]">Child sexual abuse material</strong> is removed, the account is
+                    closed, and we report it to the National Center for Missing &amp; Exploited Children (NCMEC). You can
+                    also report directly to NCMEC at{" "}
+                    <a
+                      href="https://report.cybertip.org"
+                      className="!text-[var(--accent)] underline underline-offset-2"
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      report.cybertip.org
+                    </a>{" "}
+                    or 1-800-843-5678.
+                  </span>
+                </li>
+                <li className="flex gap-3">
+                  <span aria-hidden className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />
+                  <span>Everything else is reviewed within 48 hours.</span>
+                </li>
+              </ul>
+            </SectionCard>
+            <p className="hidden px-1 text-xs leading-5 text-[var(--muted)] lg:block">
+              <EmergencyNote />
+            </p>
+          </aside>
         </div>
 
         <p className="mt-8 text-xs leading-5 text-[var(--muted)] lg:hidden">

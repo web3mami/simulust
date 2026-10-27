@@ -9,12 +9,15 @@ import { Button, cx } from "@/components/ui";
 export function ActionBar({
   onBack,
   backDisabled,
+  compactBack,
   hint,
   message,
   children,
 }: {
   onBack?: () => void;
   backDisabled?: boolean;
+  // Phones show Back as an arrow only, to leave room for two actions.
+  compactBack?: boolean;
   // Why the primary action is not available yet.
   hint?: string | null;
   // An error or notice about the last action.
@@ -33,13 +36,20 @@ export function ActionBar({
         ) : null}
         <div className="flex items-center gap-2">
           {onBack ? (
-            <Button variant="secondary" size="lg" onClick={onBack} disabled={backDisabled} className="px-4 sm:px-5">
+            <Button
+              variant="secondary"
+              size="lg"
+              onClick={onBack}
+              disabled={backDisabled}
+              aria-label={compactBack ? "Back" : undefined}
+              className={compactBack ? "w-12 !px-0 sm:w-auto sm:!px-5" : "!px-4 sm:!px-5"}
+            >
               <ChevronLeftIcon className="h-5 w-5" />
-              Back
+              <span className={compactBack ? "hidden sm:inline" : undefined}>Back</span>
             </Button>
           ) : null}
           <p className={cx("hidden min-w-0 flex-1 px-2 text-sm text-[var(--muted)] sm:block", !hint && "invisible")}>{hint}</p>
-          <div className="flex min-w-0 flex-1 justify-end sm:flex-none">{children}</div>
+          <div className="flex min-w-0 flex-1 justify-end gap-2 sm:flex-none">{children}</div>
         </div>
       </div>
     </div>
