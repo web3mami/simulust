@@ -10,6 +10,7 @@ import { ActionBar } from "@/components/create/action-bar";
 import { GeneratingCard } from "@/components/create/generating";
 import { PERSONALITY_ICONS, ROLE_ICONS, VOICE_ICON } from "@/components/create/glyphs";
 import { MediaImage } from "@/components/create/media-image";
+import { NudePortraitDialog } from "@/components/create/nude-portrait";
 import styles from "@/components/create/motion.module.css";
 import {
   BODIES,
@@ -154,6 +155,10 @@ export default function CreatePage() {
   const [drawing, setDrawing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // The character just made, while the nude portrait offer is open. Every
+  // confirmed adult gets the offer (there's no switch); a held or unconfirmed
+  // account goes straight to the chat.
+  const [created, setCreated] = useState<CharacterDTO | null>(null);
   const drawToken = useRef(0);
   const heading = useRef<HTMLHeadingElement>(null);
   const shownStep = useRef<Step>("style");
@@ -476,7 +481,8 @@ export default function CreatePage() {
           imageMediaId: portrait.id,
         },
       });
-      router.push(`/date/${character.id}`);
+      if (me?.ageVerified) setCreated(character);
+      else router.push(`/date/${character.id}`);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) openLogin();
       setSaveError(error instanceof Error ? error.message : "We couldn't save your character. Try again.");
@@ -1158,6 +1164,14 @@ export default function CreatePage() {
           ) : null}
         </div>
       </div>
+      {created ? (
+        <NudePortraitDialog
+          person={created}
+          heading={`${firstName(created.name)} is ready`}
+          skip={{ label: "Start chatting", onClick: () => router.push(`/date/${created.id}`) }}
+          finish={{ label: `Chat with ${firstName(created.name)}`, onClick: () => router.push(`/date/${created.id}`) }}
+        />
+      ) : null}
     </AppShell>
   );
 }

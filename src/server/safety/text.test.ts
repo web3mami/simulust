@@ -850,13 +850,69 @@ describe("checkImagePrompt", () => {
     expect(checkImagePrompt("make a deepfake of my coworker")).toMatchObject({ ok: false, category: "real_person" });
   });
 
+  // A word only a picture makes sexual, next to school wear or a child word, is
+  // minor content in the word list, so it's logged as such before a classifier
+  // that would have said so ever reads it.
+  it("marks school or child words next to undressing or underwear as minor content", () => {
+    for (const text of [
+      "in her old high school cheer uniform, topless",
+      "in her highschool hoodie and her bra",
+      "a youthful face, in her underwear",
+      "young, braless under a thin top",
+      "the student strips slowly",
+      "in a classroom, stripping off her blouse",
+      "stripped down in the classroom",
+      "a daughter in her undies",
+      "bottomless in the playground",
+      "high school jersey, unclothed underneath",
+      "a younger look, in white knickers",
+      "high school sweater, then she disrobes",
+    ]) {
+      expect(checkText(text), text).toEqual({ ok: true });
+      const verdict = checkImagePrompt(text);
+      expect(verdict, text).toMatchObject({ ok: false, category: "image" });
+      expect(verdict, text).toHaveProperty("minor");
+    }
+  });
+
+  it("marks a strip tease, show or club next to a school word as undressing", () => {
+    for (const text of ["in the classroom, doing a strip tease", "a strip show in the classroom", "a student giving a striptease", "the student doing a strip tease"]) {
+      const verdict = checkImagePrompt(text);
+      expect(verdict, text).toMatchObject({ ok: false, category: "image" });
+      expect(verdict, text).toHaveProperty("minor");
+    }
+  });
+
+  it("doesn't mark a strip of light, stripes, a bottomless brunch or pantyhose as undressing", () => {
+    for (const text of [
+      "a youthful glow, a strip of warm light across her face",
+      "a youthful look in a striped top",
+      "young at heart, in stripes",
+      "youthful energy at a bottomless brunch",
+      "a young look, in panty hose and heels",
+      "a youthful vibe on the Vegas strip at night",
+      "wearing her old high school hoodie, stretching",
+      "in a cozy cafe across from the high school where she teaches, warm light",
+    ]) {
+      const verdict = checkImagePrompt(text);
+      expect(verdict, text).toMatchObject({ ok: false, category: "image" });
+      expect(verdict, text).not.toHaveProperty("minor");
+    }
+  });
+
+  it("leaves underwear next to a child word alone in chat", () => {
+    for (const text of ["folding the kids' underwear when you texted", "took my daughter shopping for her first bra", "the kids ran around topless at the beach"]) {
+      expect(checkText(text), text).toEqual({ ok: true });
+    }
+  });
+
   it("lets ordinary scenes and the app's own prompts through", () => {
     const scenes = [
       "relaxing at home in the evening, soft warm lamp light, looking into the camera with a slow smile",
       "on a rooftop terrace at golden hour, linen sundress, leaning on the railing, shot from a low angle",
       "an old-school pinup look in a red dress",
       "she winks and smiles",
-      "subtle natural movement: slow breathing, a soft smile, hair moving gently, a slight turn of the head. The same adult from the photo, same face and body, natural realistic motion, steady camera, consistent lighting.",
+      "subtle natural movement: slow breathing, a soft smile, hair moving gently, a slight turn of the head, alone, the only person in the scene. The same adult from the photo, same face and body, natural realistic motion, steady camera, consistent lighting.",
       "at the beach under a gentle sunset",
     ];
     for (const scene of scenes) expect(checkImagePrompt(scene), scene).toEqual({ ok: true });
@@ -1090,5 +1146,19 @@ describe("asName", () => {
     expect(asName("ÉLODIE o'brien")).toBe("Élodie O'Brien");
     expect(checkText(asName("child yuki")).ok).toBe(false);
     expect(checkText(asName("yuki tanaka")).ok).toBe(true);
+  });
+});
+
+describe("declaresMinorAge: statements about turning 18", () => {
+  it("marks someone who isn't 18 yet", () => {
+    for (const text of ["I'm not quite 18", "I turn 18 next month", "I'll be eighteen in May", "im turning 18 soon", "me: 16"]) {
+      expect(declaresMinorAge(text), text).toBe(true);
+    }
+  });
+
+  it("leaves adults and other people alone", () => {
+    for (const text of ["I'm 34", "she's 16", "my daughter turns 18 next month", "I turned 18 years ago"]) {
+      expect(declaresMinorAge(text), text).toBe(false);
+    }
   });
 });

@@ -84,12 +84,25 @@ type Loaded = { key: string | null; characters: CharacterDTO[] | null; error?: s
 // the seeds and swapping.
 let lastLoaded: Loaded | null = null;
 
+// The server only sends nude art to a confirmed adult with no hold; this drops
+// any the browser still holds once /api/me says otherwise (say a list loaded
+// before a hold was placed, or before signing out in another tab).
+function withoutExplicitArt<T extends Character>(person: T): T {
+  return person.explicitImage ? { ...person, explicitImage: undefined } : person;
+}
+
 // Everyone the current user can see. Until the API answers (or if it fails),
 // the official seeds stand in so the page never renders empty.
 export function useCatalogue() {
-  const { ready, session } = useSession();
+  const { ready, session, me } = useSession();
   const api = useApi();
   const key = session?.detail ?? null;
+  // Whether the viewer may see explicit content (me.ageVerified: a confirmed
+  // adult with no hold) changes what the API sends (nude art or not), so a
+  // change, like confirming an age or a hold being placed, loads the list again
+  // behind the scenes. A guest never may. Null while /api/me is still answering:
+  // the server has already decided what this viewer gets.
+  const explicit = me ? me.ageVerified : ready && !session ? false : null;
   const [loaded, setLoaded] = useState<Loaded | null>(() => lastLoaded);
   const [attempt, setAttempt] = useState(0);
   const [removed, setRemoved] = useState<string[]>([]);
@@ -115,18 +128,24 @@ export function useCatalogue() {
     return () => {
       cancelled = true;
     };
-  }, [api, ready, key, attempt]);
+  }, [api, ready, key, attempt, explicit]);
 
   const current = loaded && loaded.key === key ? loaded : null;
-  const characters = useMemo(
-    () => (current?.characters ?? SEED_CHARACTERS).filter((person) => !removed.includes(person.id)),
-    [current, removed],
-  );
+  const characters = useMemo(() => {
+    const people = (current?.characters ?? SEED_CHARACTERS).filter((person) => !removed.includes(person.id));
+    return explicit === false ? people.map(withoutExplicitArt) : people;
+  }, [current, removed, explicit]);
   const status: "loading" | "ready" | "error" = !ready || !current ? "loading" : current.characters ? "ready" : "error";
 
   const retry = useCallback(() => {
     setLoaded(null);
     setAttempt((count) => count + 1);
+  }, []);
+  // Swaps in a character the API just returned (e.g. with new nude art).
+  const replace = useCallback((person: CharacterDTO) => {
+    const swap = (list: CharacterDTO[]) => list.map((item) => (item.id === person.id ? person : item));
+    if (lastLoaded?.characters) lastLoaded = { ...lastLoaded, characters: swap(lastLoaded.characters) };
+    setLoaded((now) => (now?.characters ? { ...now, characters: swap(now.characters) } : now));
   }, []);
   const remove = useCallback((id: string) => {
     if (lastLoaded?.characters) {
@@ -135,7 +154,7 @@ export function useCatalogue() {
     setRemoved((ids) => [...ids, id]);
   }, []);
 
-  return { characters, status, error: current?.error, retry, remove };
+  return { characters, status, error: current?.error, retry, remove, replace };
 }
 
 export function relativeTime(iso: string, now = Date.now()) {
@@ -228,6 +247,8 @@ export const THEMES: Theme[] = [
   },
 ];
 
+// There's no separate "Uncensored" row or filter: the whole site is, and every
+// card already shows a confirmed adult the nude art where it exists.
 export function themeById(id: string | null | undefined) {
   return THEMES.find((theme) => theme.id === id) ?? null;
 }

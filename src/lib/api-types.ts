@@ -7,20 +7,30 @@ export type AgeStatus = "none" | "pending" | "approved" | "declined";
 
 export type Me = {
   id: string;
+  // The login name of a username account (null for dev and older accounts).
+  username: string | null;
   displayName: string;
   isAdmin: boolean;
   ageStatus: AgeStatus;
+  // A confirmed adult with no explicit hold: everything explicit is open to
+  // them. There's no separate explicit switch; the whole site is uncensored.
   ageVerified: boolean;
+  // Gave a date of birth of 18 or over at sign-up (no ID involved).
+  ageAttested: boolean;
+  // Said they're under 18: explicit content is off until an admin reviews it.
+  explicitHold: boolean;
   memberUntil: string | null;
   isMember: boolean;
-  settings: { explicit: boolean; unpromptedMedia: boolean };
+  settings: { unpromptedMedia: boolean };
   balance: number;
   freeMessagesLeft: number;
 };
 
 export type Features = {
   payments: boolean;
-  ageVerification: "veriff" | "dev" | "off";
+  // "gate": adults confirm a date of birth in the app (the default, no ID).
+  // Otherwise ID checks: through Veriff, the development stand-in, or off.
+  ageVerification: "gate" | "veriff" | "dev" | "off";
   voice: boolean;
   video: boolean;
   images: "worker" | "pollinations" | "mock";
@@ -37,6 +47,9 @@ export type MediaDTO = {
   status: "pending" | "ready" | "failed" | "blocked";
   url: string | null;
   error?: string | null;
+  // Explicit media the viewer can't see right now (an explicit hold, or no age
+  // confirmation yet): no URL, shown as a locked 18+ tile.
+  locked?: boolean;
 };
 
 export type MessageDTO = {

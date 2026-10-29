@@ -106,6 +106,13 @@ html[data-age-ok] .age-pending-gate {
   display: none;
 }
 
+/* The pending check also carries the refusal: a device the boot script marked
+   as turned away (under 18) sees only the refusal, everyone else only the form. */
+html[data-age-refused] .age-gate-form,
+html:not([data-age-refused]) .age-gate-refused {
+  display: none;
+}
+
 /* Motion: short and quiet, and off for people who ask for less. */
 @keyframes page-in {
   from {

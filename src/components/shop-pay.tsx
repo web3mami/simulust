@@ -11,6 +11,7 @@ import { CheckIcon, CurrencyMark, TrustRow, formatDate } from "@/components/prem
 import { prefersReducedMotion, useDialog } from "@/components/premium/use-dialog";
 import { PremiumIcon } from "@/components/premium-icon";
 import { isPrivyConfigured, solanaChain } from "@/components/privy-app";
+import { payingWallet, useWalletStatus } from "@/components/wallet-sync";
 import { buttonClass, cx } from "@/components/ui";
 import { ApiError, useApi } from "@/lib/api";
 import type { OrderDTO } from "@/lib/api-types";
@@ -145,61 +146,66 @@ const DEV_BUTTON = buttonClass("ghost", "md", "w-full border border-dashed borde
 
 function PrivyWalletPay({ order, onSent }: { order: OrderDTO; onSent: () => void }) {
   const api = useApi();
+  const { me } = useSession();
+  const status = useWalletStatus();
   const { ready, wallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The account's own embedded wallet (made at sign-up by WalletSync), and
+  // only the one synced for whoever is signed in now: just after switching
+  // accounts Privy can still hold the last account's. No other wallets
+  // connect here: Phantom and Solflare pay through Solana Pay below.
+  const wallet = ready ? payingWallet(wallets, status, me?.id ?? null) : undefined;
 
-  if (!ready) return <p className="text-center text-xs text-[var(--muted)]">Loading your wallet…</p>;
-  if (!wallets.length) return null;
+  if (!wallet) {
+    // Privy couldn't set one up: the QR code and wallet link still work.
+    // Anything else (syncing, a switch of account, Privy's list catching up)
+    // is still being set up.
+    if (status.state === "unavailable" || status.state === "none") return null;
+    return (
+      <p
+        role="status"
+        className="flex items-center justify-center gap-2 rounded-2xl bg-[var(--surface)] px-4 py-3 text-xs text-[var(--muted)] ring-1 ring-white/5"
+      >
+        <span aria-hidden className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent)] motion-reduce:animate-none" />
+        Setting up your wallet…
+      </p>
+    );
+  }
 
-  async function pay(wallet: ConnectedStandardSolanaWallet) {
-    setBusy(wallet.address);
+  async function pay(from: ConnectedStandardSolanaWallet) {
+    setBusy(true);
     setError(null);
     try {
       const { transaction } = await api<{ transaction: string; message: string }>(
         `/api/orders/${order.id}/transaction`,
-        { method: "POST", json: { account: wallet.address } },
+        { method: "POST", json: { account: from.address } },
       );
       const bytes = Uint8Array.from(atob(transaction), (char) => char.charCodeAt(0));
       // Privy pays the network fee for its own embedded wallets ("App pays"),
-      // so USDC buyers need no SOL. External wallets pay their own fee.
-      const embedded = "privy:" in wallet.standardWallet.features;
+      // so USDC buyers need no SOL. Without sponsorship the wallet pays it.
       try {
-        await signAndSendTransaction({ transaction: bytes, wallet, chain: solanaChain, options: { sponsor: embedded } });
+        await signAndSendTransaction({ transaction: bytes, wallet: from, chain: solanaChain, options: { sponsor: true } });
       } catch (failure) {
         const text = failure instanceof Error ? failure.message : String(failure);
-        if (!embedded || !/sponsor/i.test(text)) throw failure;
-        await signAndSendTransaction({ transaction: bytes, wallet, chain: solanaChain });
+        if (!/sponsor/i.test(text)) throw failure;
+        await signAndSendTransaction({ transaction: bytes, wallet: from, chain: solanaChain });
       }
       onSent();
     } catch (failure) {
       setError(walletError(failure, order.currency));
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   }
 
   return (
     <div className="space-y-2">
-      {wallets.slice(0, 3).map((wallet) => (
-        <button
-          key={wallet.address}
-          type="button"
-          disabled={busy !== null}
-          onClick={() => void pay(wallet)}
-          className={buttonClass("primary", "lg", "w-full")}
-        >
-          {busy === wallet.address
-            ? "Confirm in your wallet…"
-            : wallets.length > 1
-              ? `Pay with ${wallet.standardWallet.name} ${shortAddress(wallet.address)}`
-              : "Pay with wallet"}
-        </button>
-      ))}
-      {wallets.length === 1 ? (
-        <p className="text-center text-[11px] text-[var(--muted)]">From {shortAddress(wallets[0].address)}</p>
-      ) : null}
+      <button type="button" disabled={busy} onClick={() => void pay(wallet)} className={buttonClass("primary", "lg", "w-full")}>
+        {busy ? "Confirm in your wallet…" : "Pay from your wallet"}
+      </button>
+      <p className="text-center text-[11px] text-[var(--muted)]">Your Simulust wallet {shortAddress(wallet.address)}</p>
       {error ? <ErrorText>{error}</ErrorText> : null}
       <div className="flex items-center gap-3 pt-2 text-[11px] font-medium uppercase tracking-wide text-[var(--muted)] md:hidden" aria-hidden>
         <span className="h-px flex-1 bg-[var(--line)]" />

@@ -8,14 +8,16 @@ import type { Features, Me } from "@/lib/api-types";
 export async function toMe(user: User): Promise<Me> {
   return {
     id: user.id,
+    username: user.username,
     displayName: user.displayName,
     isAdmin: user.isAdmin,
     ageStatus: user.ageStatus,
     ageVerified: isAgeVerified(user),
+    ageAttested: user.ageAttestedAt !== null,
+    explicitHold: user.explicitHoldAt !== null,
     memberUntil: user.memberUntil?.toISOString() ?? null,
     isMember: isMember(user),
     settings: {
-      explicit: isAgeVerified(user) && user.settings.explicit === true,
       unpromptedMedia: user.settings.unpromptedMedia === true,
     },
     balance: await balanceOf(user.id),
@@ -26,7 +28,8 @@ export async function toMe(user: User): Promise<Me> {
 export function publicFeatures(): Features {
   return {
     payments: features.payments,
-    ageVerification: features.veriff ? "veriff" : env.allowDevAgeCheck ? "dev" : "off",
+    ageVerification:
+      env.ageVerification === "gate" ? "gate" : features.veriff ? "veriff" : env.allowDevAgeCheck ? "dev" : "off",
     voice: features.tts,
     video: Boolean(env.videoApiUrl) || env.imageProvider === "mock",
     images: env.imageProvider,

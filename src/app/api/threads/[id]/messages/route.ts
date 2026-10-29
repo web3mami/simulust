@@ -1,17 +1,16 @@
-import { and, eq, isNull } from "drizzle-orm";
 import { after, type NextRequest } from "next/server";
 import { z } from "zod";
+import { selfDeclaredMinor } from "@/server/age";
 import { isMember, requireUser } from "@/server/auth";
 import { balanceOf, chargeForMessage, freeMessagesLeft, lockUser, refund } from "@/server/credits";
 import { db } from "@/server/db";
-import { moderationEvents } from "@/server/db/schema";
 import { CRISIS_FALLBACK_REPLY, CRISIS_NOTICE, crisisResources } from "@/server/crisis";
 import { errorResponse, HttpError, route } from "@/server/http";
 import { stream } from "@/server/llm";
 import { rememberTurn, type TurnInput } from "@/server/memory";
 import { buildChatPrompt } from "@/server/prompts";
 import { rateLimit } from "@/server/ratelimit";
-import { moderateText } from "@/server/safety/moderation";
+import { logModeration, moderateText } from "@/server/safety/moderation";
 import { checkText, declaresMinorAge, detectCrisis, minorAdjacent, REFUSAL } from "@/server/safety/text";
 import { addMessage, deleteMessage, discloseIfDue, requireThread, toMessageDTO, touchThread } from "@/server/threads";
 import type { ChatStreamEvent } from "@/lib/api-types";
@@ -68,48 +67,6 @@ const NDJSON = {
 function turnedAway(failure: { error: string; code?: string }) {
   const events: ChatStreamEvent[] = [{ type: "crisis", resources: crisisResources() }, { type: "error", ...failure }];
   return new Response(events.map((event) => `${JSON.stringify(event)}\n`).join(""), { headers: NDJSON });
-}
-
-// Someone who says they're under 18 may well be: a person reviews the account
-// (nothing is banned automatically). One open review per account, with repeats
-// counted on it, so one account can't bury the rest of the queue.
-async function escalateMinor(userId: string, threadId: string, content: string) {
-  try {
-    const database = await db();
-    await database.transaction(async (tx) => {
-      await lockUser(tx, userId);
-      const [open] = await tx
-        .select({ id: moderationEvents.id, details: moderationEvents.details })
-        .from(moderationEvents)
-        .where(
-          and(
-            eq(moderationEvents.userId, userId),
-            eq(moderationEvents.category, "self_declared_minor"),
-            eq(moderationEvents.action, "escalated"),
-            isNull(moderationEvents.reviewedAt),
-          ),
-        )
-        .limit(1);
-      if (open) {
-        const repeats = Number(open.details?.repeats ?? 0) + 1;
-        await tx
-          .update(moderationEvents)
-          .set({ details: { ...open.details, repeats, lastAt: new Date().toISOString() } })
-          .where(eq(moderationEvents.id, open.id));
-        return;
-      }
-      await tx.insert(moderationEvents).values({
-        userId,
-        targetType: "message",
-        targetId: threadId,
-        category: "self_declared_minor",
-        action: "escalated",
-        details: { excerpt: content.slice(0, 280) },
-      });
-    });
-  } catch (error) {
-    console.error("Failed to escalate a self-declared minor", error);
-  }
 }
 
 type Job = TurnInput & { threadId: string; skipFacts: boolean };
@@ -170,11 +127,19 @@ export const POST = route(async (request: NextRequest, ctx: RouteContext<"/api/t
         // moderation, credits, the daily cap.
         if (crisis) send({ type: "crisis", resources: crisisResources() });
 
-        const verdict = await moderateText(content, { userId: user.id, targetType: "message", targetId: thread.id });
+        // Saying you're under 18 ends the turn whether or not the words trip a
+        // filter ("me: 16" doesn't): explicit content goes off and a person
+        // reviews the account (selfDeclaredMinor).
+        const minorClaim = declaresMinorAge(content);
+        if (minorClaim) {
+          const where = { userId: user.id, targetType: "message" as const, targetId: thread.id };
+          await logModeration(where, "minor", "blocked", { matched: "self-declared age", excerpt: content.slice(0, 280) });
+          await selfDeclaredMinor(user.id, { targetType: "message", targetId: thread.id, excerpt: content });
+        }
+        const verdict: Awaited<ReturnType<typeof moderateText>> = minorClaim
+          ? { ok: false, category: "minor", matched: "self-declared age" }
+          : await moderateText(content, { userId: user.id, targetType: "message", targetId: thread.id });
         if (!verdict.ok) {
-          if ("category" in verdict && verdict.category === "minor" && declaresMinorAge(content)) {
-            await escalateMinor(user.id, thread.id, content);
-          }
           // The user's text is not stored; only the notice is. Someone in crisis
           // gets the supportive notice instead of a refusal.
           const notice = await addMessage({

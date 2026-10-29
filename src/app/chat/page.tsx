@@ -1,34 +1,37 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { AppShell, useLane } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { EXPLORE_HREF } from "@/components/chat/format";
+import { featuredIn, useCatalogue } from "@/components/home/catalogue";
 import { ChatIcon } from "@/components/icons";
 import { ButtonLink, CharacterCard, cx } from "@/components/ui";
 import type { ThreadDTO } from "@/lib/api-types";
-import { laneOf, SEED_CHARACTERS } from "@/lib/characters";
+import type { Character } from "@/lib/characters";
 
-// A few people to start with, from the lane picked in the top bar, leaving out
-// anyone you already talk to. A grid when there's nothing else on the page, a
-// row to swipe through under your chats otherwise.
+// A few people to start with: the official characters of the lane picked in
+// the top bar (from the live list, so a confirmed adult sees their 18+ art as
+// everywhere else), leaving out anyone you already talk to. A grid when there's
+// nothing else on the page, a row to swipe through under your chats otherwise.
 function Suggestions({
+  featured,
   count,
   exclude,
   layout,
   title = "a new chat",
   className,
 }: {
+  featured: Character[];
   count: number;
   exclude: ReadonlySet<string>;
   layout: "grid" | "row";
   title?: string;
   className?: string;
 }) {
-  const { lane } = useLane();
-  const people = SEED_CHARACTERS.filter((person) => laneOf(person) === lane && !exclude.has(person.id)).slice(0, count);
+  const people = featured.filter((person) => !exclude.has(person.id)).slice(0, count);
   if (people.length === 0) return null;
   return (
     <div className={className}>
@@ -57,7 +60,17 @@ function Suggestions({
 }
 
 // Desktop centre when no conversation is open.
-function PickAChat({ opening, first, exclude }: { opening: boolean; first: boolean; exclude: ReadonlySet<string> }) {
+function PickAChat({
+  opening,
+  first,
+  featured,
+  exclude,
+}: {
+  opening: boolean;
+  first: boolean;
+  featured: Character[];
+  exclude: ReadonlySet<string>;
+}) {
   if (opening) {
     return (
       <p className="m-auto animate-pulse text-sm text-[var(--muted)]" role="status">
@@ -94,7 +107,7 @@ function PickAChat({ opening, first, exclude }: { opening: boolean; first: boole
           Create your own
         </ButtonLink>
       </div>
-      <Suggestions count={4} exclude={exclude} layout="grid" className="mt-12 w-full text-left" />
+      <Suggestions featured={featured} count={4} exclude={exclude} layout="grid" className="mt-12 w-full text-left" />
     </div>
   );
 }
@@ -104,6 +117,9 @@ const NONE: ReadonlySet<string> = new Set();
 export default function ChatPage() {
   const router = useRouter();
   const { ready, session } = useSession();
+  const { lane } = useLane();
+  const { characters } = useCatalogue();
+  const featured = useMemo(() => featuredIn(characters, lane), [characters, lane]);
   // The chats once they load (null until they do, or if loading failed).
   const [threads, setThreads] = useState<ThreadDTO[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -138,14 +154,21 @@ export default function ChatPage() {
           <ConversationList as="h1" onLoaded={onLoaded} />
           {session && threads ? (
             threads.length === 0 ? (
-              <Suggestions count={6} exclude={exclude} layout="grid" title="your first chat" className="px-4 pb-6 pt-2 lg:hidden" />
+              <Suggestions
+                featured={featured}
+                count={6}
+                exclude={exclude}
+                layout="grid"
+                title="your first chat"
+                className="px-4 pb-6 pt-2 lg:hidden"
+              />
             ) : (
-              <Suggestions count={8} exclude={exclude} layout="row" className="px-4 pb-6 pt-4 lg:hidden" />
+              <Suggestions featured={featured} count={8} exclude={exclude} layout="row" className="px-4 pb-6 pt-4 lg:hidden" />
             )
           ) : null}
         </aside>
         <section className="hidden min-w-0 flex-1 overflow-y-auto lg:flex">
-          {loading ? null : <PickAChat opening={opening} first={count === 0 && !failed} exclude={exclude} />}
+          {loading ? null : <PickAChat opening={opening} first={count === 0 && !failed} featured={featured} exclude={exclude} />}
         </section>
       </div>
     </AppShell>

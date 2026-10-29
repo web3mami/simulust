@@ -1,7 +1,6 @@
 "use client";
 
 import { PrivyProvider } from "@privy-io/react-auth";
-import { toSolanaWalletConnectors } from "@privy-io/react-auth/solana";
 import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
 
 // A production build fails without these (next.config.ts), and the server won't
@@ -19,8 +18,10 @@ export function isPrivyConfigured() {
 
 export const solanaChain = CLUSTER === "mainnet" ? ("solana:mainnet" as const) : ("solana:devnet" as const);
 
-const solanaConnectors = toSolanaWalletConnectors();
-
+// Privy is only the wallet here. People sign in with a username and password;
+// WalletSync (wallet-sync.tsx) signs Privy in with our own token and creates the
+// account's Solana wallet. Privy's login modal is never opened. Other wallets
+// (Phantom, Solflare) pay through Solana Pay, so none are connected here.
 export function PrivyApp({ children }: { children: React.ReactNode }) {
   if (!isPrivyConfigured()) {
     return children;
@@ -30,20 +31,16 @@ export function PrivyApp({ children }: { children: React.ReactNode }) {
     <PrivyProvider
       appId={APP_ID}
       config={{
-        loginMethods: ["email", "google", "twitter", "wallet"],
         appearance: {
           theme: "#12110F",
           accentColor: "#C6A15B",
           walletChainType: "solana-only",
         },
-        externalWallets: {
-          solana: { connectors: solanaConnectors },
-        },
         embeddedWallets: {
           ethereum: { createOnLogin: "off" },
-          // Email and social users get a Solana wallet to pay from. Users who
-          // log in with Phantom or Solflare keep using their own wallet.
-          solana: { createOnLogin: "users-without-wallets" },
+          // JWT-based auth never triggers this; WalletSync creates the wallet.
+          solana: { createOnLogin: "off" },
+          // Privy's confirmation window before the wallet signs a payment.
           showWalletUIs: true,
         },
         solana: {

@@ -6,6 +6,8 @@
 // No "server-only" import here: instrumentation loads this at boot. Nothing in
 // it reaches the browser, because non-NEXT_PUBLIC variables are never bundled.
 
+import { createPrivateKey, type KeyObject } from "node:crypto";
+
 function read(name: string) {
   const value = process.env[name];
   return value && value.trim() ? value.trim() : undefined;
@@ -35,16 +37,45 @@ const browserEnv = {
   solanaRpcUrl: process.env.NEXT_PUBLIC_SOLANA_RPC_URL,
 };
 
+function ageVerificationMode(value: string | undefined): "gate" | "id" {
+  if (value === undefined || value === "gate") return "gate";
+  if (value === "id") return "id";
+  throw new Error(`AGE_VERIFICATION must be "gate" or "id", not "${value}".`);
+}
+
+// Country-region pairs (ISO 3166-2, e.g. "US-TX"). A bare region code would
+// never match anything, so a typo stops the boot instead of silently letting a
+// region through.
+function blockedRegions(value: string | undefined): string[] {
+  const codes = (value ?? "")
+    .split(",")
+    .map((code) => code.trim().toUpperCase())
+    .filter(Boolean);
+  const wrong = codes.filter((code) => !/^[A-Z]{2}-[A-Z0-9]{1,3}$/.test(code));
+  if (wrong.length) {
+    throw new Error(`BLOCKED_REGIONS entries must look like "US-TX" (country-region), not ${wrong.map((code) => `"${code}"`).join(", ")}.`);
+  }
+  return codes;
+}
+
 export const env = {
   appUrl: read("APP_URL") ?? "http://localhost:3000",
 
   databaseUrl: read("DATABASE_URL"),
   pgliteDir: read("PGLITE_DIR") ?? ".data/pglite",
 
+  // Privy only makes each account's Solana wallet. Logins are our own
+  // (username and password), handed to Privy as a short-lived JWT signed with
+  // this key (src/server/wallet-token.ts). PEM, with "\n" escapes allowed.
   privyAppId: read("NEXT_PUBLIC_PRIVY_APP_ID"),
-  privyVerificationKey: read("PRIVY_VERIFICATION_KEY"),
+  authJwtPrivateKey: read("AUTH_JWT_PRIVATE_KEY")?.replace(/\\n/g, "\n"),
   allowDevAuth: !isProduction && read("ALLOW_DEV_AUTH") !== "0",
-  adminPrivyIds: (read("ADMIN_PRIVY_IDS") ?? "").split(",").map((id) => id.trim()).filter(Boolean),
+  // Account ids (users.id UUIDs, from /admin > Users), never usernames, so
+  // nobody can sign up as an admin by taking a name.
+  adminUserIds: (read("ADMIN_USER_IDS") ?? "")
+    .split(",")
+    .map((id) => id.trim().toLowerCase())
+    .filter(Boolean),
 
   llmBaseUrl: read("LLM_BASE_URL"),
   llmApiKey: read("LLM_API_KEY"),
@@ -93,17 +124,27 @@ export const env = {
   veriffSharedSecret: read("VERIFF_SHARED_SECRET"),
   veriffBaseUrl: read("VERIFF_BASE_URL") ?? "https://stationapi.veriff.com",
   allowDevAgeCheck: !isProduction && read("ALLOW_DEV_AGE_CHECK") !== "0",
+  // "gate" (default): adults confirm a date of birth of 18 or over, no ID.
+  // "id": explicit content needs a completed ID check (Veriff) as well.
+  ageVerification: ageVerificationMode(read("AGE_VERIFICATION")),
 
   blockedCountries: (read("BLOCKED_COUNTRIES") ?? "CU,IR,KP,SY,RU,BY")
     .split(",")
     .map((code) => code.trim().toUpperCase())
     .filter(Boolean),
+  // States and provinces blocked like countries, e.g. "US-TX,US-UT": places
+  // whose age-verification laws the operator hasn't met (see SETUP.md).
+  blockedRegions: blockedRegions(read("BLOCKED_REGIONS")),
   // Only a header that the platform in front of the app sets, overwriting
   // whatever the client sent, can be trusted for the visitor's country and IP.
   // Vercel: x-vercel-ip-country and x-real-ip (the defaults). Cloudflare:
   // cf-ipcountry and cf-connecting-ip, but only if the origin accepts traffic
   // from Cloudflare alone; otherwise anyone can send them.
   geoCountryHeader: (read("GEO_COUNTRY_HEADER") ?? "x-vercel-ip-country").toLowerCase(),
+  // The visitor's state or province, the part after the dash in ISO 3166-2
+  // ("TX"; a full "US-TX" works too). Vercel: x-vercel-ip-country-region.
+  // Cloudflare: cf-region-code, with the same caveat as cf-ipcountry.
+  geoRegionHeader: (read("GEO_REGION_HEADER") ?? "x-vercel-ip-country-region").toLowerCase(),
   clientIpHeader: (read("CLIENT_IP_HEADER") ?? "x-real-ip").toLowerCase(),
 };
 
@@ -130,6 +171,19 @@ function isPublicHttps(value: string) {
   }
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// The wallet JWT's signing key: an EC private key on P-256 (ES256), or null
+// when the PEM isn't one.
+export function p256PrivateKey(pem: string): KeyObject | null {
+  try {
+    const key = createPrivateKey(pem);
+    return key.asymmetricKeyType === "ec" && key.asymmetricKeyDetails?.namedCurve === "prime256v1" ? key : null;
+  } catch {
+    return null;
+  }
+}
+
 function refuse(problems: string[]) {
   if (problems.length) throw new Error(`Refusing to start in production: ${problems.join("; ")}.`);
 }
@@ -145,16 +199,20 @@ export function assertProductionConfig() {
   else if (!isPublicHttps(env.appUrl)) wrong.push("APP_URL must be the public https:// address");
   if (!env.databaseUrl) missing.push("DATABASE_URL");
   if (!features.privy) missing.push("NEXT_PUBLIC_PRIVY_APP_ID");
-  // Only admins action reports (CSAM included) and lift age locks. Every login
+  // Privy checks every wallet login against this key's public half (/api/auth/jwks).
+  else if (!env.authJwtPrivateKey) missing.push("AUTH_JWT_PRIVATE_KEY");
+  else if (!p256PrivateKey(env.authJwtPrivateKey)) wrong.push("AUTH_JWT_PRIVATE_KEY must be an EC P-256 private key (PKCS8 PEM)");
+  // Only admins action reports (CSAM included) and lift age locks. Every request
   // resets is_admin from this list, so it can't be granted in the database instead.
-  if (!env.adminPrivyIds.length) missing.push("ADMIN_PRIVY_IDS");
-  else if (env.adminPrivyIds.some((id) => !id.startsWith("did:privy:"))) {
-    wrong.push("ADMIN_PRIVY_IDS must be Privy user ids (did:privy:...)");
+  if (!env.adminUserIds.length) missing.push("ADMIN_USER_IDS");
+  else if (env.adminUserIds.some((id) => !UUID.test(id))) {
+    wrong.push("ADMIN_USER_IDS must be account ids (UUIDs), not usernames");
   }
   if (!features.llm) missing.push("LLM_BASE_URL / LLM_API_KEY");
   // The blocklist alone is English-only and easy to talk around.
   if (!features.remoteModeration) missing.push("MODERATION_BASE_URL / MODERATION_API_KEY / MODERATION_MODEL");
-  if (!features.veriff) missing.push("VERIFF_API_KEY / VERIFF_SHARED_SECRET");
+  // The default age gate needs no provider; ID checks need Veriff.
+  if (env.ageVerification === "id" && !features.veriff) missing.push("VERIFF_API_KEY / VERIFF_SHARED_SECRET");
   if (!features.imageModeration) missing.push("HIVE_API_KEY");
   if (!features.s3) missing.push("S3_BUCKET / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY");
   // "auto" is R2's region. Against AWS it resolves to a host that doesn't exist.
@@ -176,8 +234,9 @@ export function assertProductionConfig() {
   // Image moderation needs all three Hive projects: visual classes, apparent age, real people.
   if (!read("HIVE_DEMOGRAPHIC_API_KEY")) missing.push("HIVE_DEMOGRAPHIC_API_KEY");
   if (!read("HIVE_CELEBRITY_API_KEY")) missing.push("HIVE_CELEBRITY_API_KEY");
-  // The browser runs on the build's values. A different app id means logins the
-  // server rejects; a different cluster means payments the server never sees.
+  // The browser runs on the build's values. A different app id means wallet
+  // tokens Privy rejects (their audience is the server's app id); a different
+  // cluster means payments the server never sees.
   for (const [name, value] of Object.entries({
     NEXT_PUBLIC_PRIVY_APP_ID: browserEnv.privyAppId,
     NEXT_PUBLIC_SOLANA_CLUSTER: browserEnv.solanaCluster,

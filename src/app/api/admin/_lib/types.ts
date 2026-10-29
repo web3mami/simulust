@@ -63,13 +63,22 @@ export type AdminReviewResult = { ok: true; reviewed: number; skipped: number[];
 
 export type AdminUserDTO = {
   id: string;
+  // The login name of a username account; null for development and older accounts.
+  username: string | null;
   displayName: string;
+  // The login id: "acct:<username>", "dev:<handle>" in development, or
+  // "did:privy:..." from the old Privy login.
   privyId: string;
   isAdmin: boolean;
   ageStatus: "none" | "pending" | "approved" | "declined";
   bannedAt: string | null;
   // Banned by an age check that read an under-18 birth date; the unban is its review.
   ageLocked: boolean;
+  // Gave the age gate a date of birth of 18 or over (when, not the date).
+  ageAttestedAt: string | null;
+  // Said they're under 18 (in chat or when confirming their age): explicit
+  // content is off until an admin clears the hold.
+  explicitHoldAt: string | null;
   balance: number;
   createdAt: string;
   lastSeenAt: string;

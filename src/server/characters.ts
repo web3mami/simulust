@@ -1,13 +1,19 @@
 import "server-only";
-import { and, asc, desc, eq, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { z } from "zod";
+import { explicitAllowed } from "@/server/auth";
 import { db } from "@/server/db";
-import { characters, media, type CharacterRow, type User } from "@/server/db/schema";
+import { characters, media, type CharacterRow, type Media, type User } from "@/server/db/schema";
 import { HttpError, notFound } from "@/server/http";
-import { moderateText, refusal } from "@/server/safety/moderation";
-import { asName } from "@/server/safety/text";
+import { moderateImage } from "@/server/image-moderation";
+import { generateImage, ImageGenerationError, workerRefusalCategory } from "@/server/images";
+import { failMedia, getMedia, storeMedia } from "@/server/media";
+import { logModeration, moderateText, refusal } from "@/server/safety/moderation";
+import { asName, checkText, REFUSAL } from "@/server/safety/text";
 import type { Character } from "@/lib/characters";
 import {
+  appearanceText,
+  buildImagePrompt,
   BREASTS,
   ETHNICITIES,
   EYE_COLORS,
@@ -15,6 +21,8 @@ import {
   GUY_BODIES,
   HAIR_COLORS,
   HAIR_STYLES,
+  type ImagePrompt,
+  type ImageSubject,
   JOBS,
   KINKS,
   MAX_AGE,
@@ -27,6 +35,14 @@ import {
 import { GIVEN_NAME, NAME_MAX, NAME_MESSAGES, tidyName } from "@/lib/names";
 import { VOICES } from "@/lib/voices";
 
+// Nude art is only ever served from here, never from /public or /api/media: the
+// route checks the viewer again on every request (see explicitArtFor).
+export function explicitImagePath(characterId: string) {
+  return `/api/characters/${encodeURIComponent(characterId)}/explicit-image`;
+}
+
+// The same for every viewer: never any nude art. Lists that go to a particular
+// viewer go through characterDTOs instead, which adds it where they may see it.
 export function toCharacterDTO(row: CharacterRow): Character {
   return {
     id: row.id,
@@ -52,6 +68,26 @@ export function toCharacterDTO(row: CharacterRow): Character {
     voice: row.voice ?? undefined,
     own: row.ownerId !== null,
   };
+}
+
+// The viewer is who asked, so explicitImage is decided per request, on the
+// server: only a viewer who may see explicit content (signed in, a confirmed
+// adult, no hold) gets the URL, and only while the art's file is still
+// servable (not failed, blocked or taken down since it was drawn). Everyone
+// else gets the regular art only. The ?v= changes when the art is redrawn, so
+// a browser's cached copy isn't reused.
+export async function characterDTOs(rows: CharacterRow[], viewer: User | null): Promise<Character[]> {
+  const live = viewer && explicitAllowed(viewer) ? await liveExplicitArt(rows) : new Set<string>();
+  return rows.map((row) => {
+    const dto = toCharacterDTO(row);
+    if (!live.has(row.id) || !row.explicitImageMediaId) return dto;
+    return { ...dto, explicitImage: `${explicitImagePath(row.id)}?v=${row.explicitImageMediaId.slice(0, 8)}` };
+  });
+}
+
+export async function characterDTO(row: CharacterRow, viewer: User | null): Promise<Character> {
+  const [dto] = await characterDTOs([row], viewer);
+  return dto;
 }
 
 const visibleTo = (userId: string | null) =>
@@ -153,6 +189,11 @@ export async function createCharacter(user: User, input: CreateCharacterInput) {
   if (!portrait || portrait.status !== "ready") {
     throw new HttpError(422, "Generate a portrait first.", "portrait_missing");
   }
+  // A character's regular portrait is shown without the explicit check (it's
+  // the art everyone else sees), so a nude portrait can never become one.
+  if (isExplicitArt(portrait)) {
+    throw new HttpError(422, "Pick the regular portrait for the character's face.", "portrait_explicit");
+  }
 
   const lane = input.style === "anime" ? "anime" : input.gender === "Man" ? "guys" : "girls";
   const id = crypto.randomUUID();
@@ -197,4 +238,210 @@ export async function deleteCharacter(user: User, id: string) {
     .where(and(eq(characters.id, id), eq(characters.ownerId, user.id), isNull(characters.deletedAt)))
     .returning({ id: characters.id });
   if (!row) throw notFound();
+}
+
+// ---------------------------------------------------------------------------
+// Nude art: one fictional adult character, alone, drawn from the stored look.
+
+// Media made for explicit viewers only. Set on every nude portrait (and on chat
+// photos drawn for a viewer allowed explicit content), in the moderation record.
+export function isExplicitArt(row: Pick<Media, "moderation">) {
+  return (row.moderation as { explicit?: unknown } | null)?.explicit === true;
+}
+
+type ArtFile = Pick<Media, "kind" | "status" | "storageKey" | "characterId" | "userId">;
+
+// Whether a character's nude-art file can be shown: an image, still ready (a
+// failed, blocked or taken-down row never is), with a file, and made for this
+// character by its owner (null for official characters). The listings and the
+// file route use the same test, so a card never points at art the route won't
+// serve.
+function servableArt(file: ArtFile, character: CharacterRow) {
+  return (
+    file.kind === "image" &&
+    file.status === "ready" &&
+    Boolean(file.storageKey) &&
+    file.characterId === character.id &&
+    file.userId === character.ownerId
+  );
+}
+
+// The ids of the characters among these whose nude art is servable right now.
+async function liveExplicitArt(rows: CharacterRow[]): Promise<Set<string>> {
+  const linked = rows.filter((row) => row.explicitImageMediaId && row.explicitImageUrl);
+  if (!linked.length) return new Set();
+  const database = await db();
+  const files = await database
+    .select({
+      id: media.id,
+      kind: media.kind,
+      status: media.status,
+      storageKey: media.storageKey,
+      characterId: media.characterId,
+      userId: media.userId,
+    })
+    .from(media)
+    .where(inArray(media.id, linked.map((row) => row.explicitImageMediaId!)));
+  const byId = new Map(files.map((file) => [file.id, file]));
+  return new Set(
+    linked
+      .filter((row) => {
+        const file = byId.get(row.explicitImageMediaId!);
+        return file !== undefined && servableArt(file, row);
+      })
+      .map((row) => row.id),
+  );
+}
+
+// The nude portrait's file, if this viewer may see it: explicit content allowed,
+// the character visible to them (an official one or their own) and its art
+// servable. Anything else is null, which the route answers with a plain 404.
+export async function explicitArtFor(viewer: User | null, id: string): Promise<Media | null> {
+  if (!viewer || !explicitAllowed(viewer) || id.length > 64) return null;
+  const character = await findCharacterFor(viewer.id, id);
+  if (!character?.explicitImageMediaId || !character.explicitImageUrl) return null;
+  const row = await getMedia(character.explicitImageMediaId);
+  if (!row || !servableArt(row, character)) return null;
+  return row;
+}
+
+// What an image prompt needs to know about a character. Only values from the
+// creator's lists reach the prompt (appearanceText drops anything else).
+export function imageSubjectOf(character: CharacterRow): ImageSubject {
+  return {
+    name: character.name,
+    age: character.age,
+    gender: character.gender,
+    style: character.style,
+    ethnicity: character.ethnicity,
+    body: character.body,
+    hair: character.hair,
+    hairStyle: character.hairStyle,
+    eyeColor: character.eyeColor,
+    breast: character.breast,
+  };
+}
+
+// Fixed scenes, so no free text reaches a nude portrait's prompt. One person,
+// a private adult setting, a portrait framing that fills a 3:4 card.
+export const EXPLICIT_PORTRAIT_SCENES = [
+  "nude, lying back on white linen sheets in soft morning light, one arm resting above the head, looking into the camera with a slow inviting smile",
+  "nude, standing by a tall window at dusk, warm golden light across bare skin, glancing back over one shoulder at the camera",
+  "nude, sitting on the edge of a velvet armchair in a dim hotel suite, candlelight, a confident half smile at the camera",
+  "nude, stepping out of a steamy shower, water on bare skin, soft bathroom light, looking straight at the camera",
+] as const;
+
+// The nude portrait's prompt: the character's own look, adult anchors first and
+// the minor and other-people negatives, from the same builder as every chat
+// photo, so the portrait shows the character alone.
+export function explicitPortraitPrompt(character: CharacterRow, scene: number): ImagePrompt {
+  const where = EXPLICIT_PORTRAIT_SCENES[Math.abs(Math.trunc(scene)) % EXPLICIT_PORTRAIT_SCENES.length];
+  return buildImagePrompt({ subject: imageSubjectOf(character), scene: where, explicit: true });
+}
+
+// The name and look are screened before anything is drawn. Every value comes
+// from a list, so this only trips on an old row or a hand edit; it's logged
+// like the photo route's check.
+export async function screenLook(character: CharacterRow, userId: string | null) {
+  const verdict = checkText(`${character.name}. ${appearanceText(imageSubjectOf(character))}`);
+  if (verdict.ok) return;
+  await logModeration({ userId, targetType: "character", targetId: character.id }, verdict.category, "blocked", {
+    matched: verdict.matched,
+  });
+  throw new HttpError(422, REFUSAL[verdict.category], `blocked_${verdict.category}`);
+}
+
+export type ExplicitPortraitOutcome =
+  | { ok: true; media: Media; character: CharacterRow }
+  | {
+      ok: false;
+      reason: "worker_blocked" | "generation_failed" | "moderation_unavailable" | "image_blocked" | "save_failed" | "character_gone";
+    };
+
+// Draws, checks and stores a nude portrait into a pending media row the caller
+// made (and charged for), then points the character at it. A failure marks the
+// row failed or blocked and says why; giving credits back is the caller's job.
+// Image moderation runs with allowExplicit: nudity passes, and everything else
+// on the block list (minors, real people, gore) still blocks.
+export async function drawExplicitPortrait(
+  character: CharacterRow,
+  row: Media,
+  { prompt, negativePrompt }: ImagePrompt,
+): Promise<ExplicitPortraitOutcome> {
+  const userId = row.userId;
+  let image;
+  try {
+    image = await generateImage({
+      prompt,
+      negativePrompt,
+      width: 896,
+      height: 1152,
+      loraId: character.loraId,
+      style: character.style,
+      label: character.name,
+    });
+  } catch (error) {
+    console.error("Nude portrait generation failed", error);
+    const blocked = error instanceof ImageGenerationError && error.blocked;
+    if (blocked) {
+      const reason = (error as ImageGenerationError).reason ?? "";
+      await logModeration({ userId, targetType: "image", targetId: row.id }, workerRefusalCategory(reason), "blocked", {
+        reason: (reason || String((error as Error).message)).slice(0, 300),
+      });
+    }
+    await failMedia(row.id, blocked ? "blocked" : "failed", blocked ? "Blocked by the image worker." : "Generation failed.");
+    return { ok: false, reason: blocked ? "worker_blocked" : "generation_failed" };
+  }
+
+  const moderation = await moderateImage(image.bytes, image.mimeType, {
+    userId,
+    targetType: "image",
+    targetId: row.id,
+    allowExplicit: true,
+  });
+  if (!moderation.ok) {
+    await failMedia(
+      row.id,
+      moderation.unavailable ? "failed" : "blocked",
+      moderation.unavailable ? "Safety check unavailable." : `Blocked: ${moderation.categories.join(", ")}`,
+      { provider: image.provider, categories: moderation.categories, result: moderation.raw },
+    );
+    return { ok: false, reason: moderation.unavailable ? "moderation_unavailable" : "image_blocked" };
+  }
+
+  let stored: Media;
+  try {
+    stored = await storeMedia(row, image.bytes, image.mimeType, {
+      provider: image.provider,
+      seed: image.seed,
+      style: character.style,
+      explicit: true,
+      categories: [],
+      result: moderation.raw,
+    });
+    if (stored.status !== "ready") throw new Error(`Nude portrait ${row.id} is ${stored.status}, not ready.`);
+  } catch (error) {
+    console.error("Saving the nude portrait failed", error);
+    await failMedia(row.id, "failed", "The portrait couldn't be saved.");
+    return { ok: false, reason: "save_failed" };
+  }
+
+  const database = await db();
+  const [updated] = await database
+    .update(characters)
+    .set({ explicitImageMediaId: stored.id, explicitImageUrl: explicitImagePath(character.id) })
+    .where(
+      and(
+        eq(characters.id, character.id),
+        isNull(characters.deletedAt),
+        character.ownerId ? eq(characters.ownerId, character.ownerId) : isNull(characters.ownerId),
+      ),
+    )
+    .returning();
+  if (!updated) {
+    // Deleted while it was drawn: nothing points at the file, so it's let go.
+    await failMedia(stored.id, "failed", "The character was deleted.");
+    return { ok: false, reason: "character_gone" };
+  }
+  return { ok: true, media: stored, character: updated };
 }

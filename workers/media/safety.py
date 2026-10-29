@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 import os
 import re
 import threading
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import numpy as np
 from PIL import Image
@@ -791,18 +792,174 @@ _TAGGER_BLOCK = [
     "kindergarten_uniform", "randoseru", "school_uniform", "serafuku", "elementary_school",
     "child_on_child", "flat_chest_child",
 ]
+# Danbooru tags that put a second person in the picture: every image and clip
+# shows one character, alone. The app's text checks (bringsOthers in
+# src/server/studio.ts) keep other people out of prompts; these catch one the
+# model drew anyway. A partner's body counts (faceless_male, disembodied_penis,
+# pov_hands: the viewer's hands in the frame). Not implied_sex: it marks a
+# partner kept out of the picture and fires on solo scenes the app allows (toys,
+# touching herself), while a partner in the frame shows up as one of these.
+# Unknown tags are ignored, as for _TAGGER_BLOCK, and logged at load.
+_PEOPLE_BLOCK = [
+    "multiple_girls", "multiple_boys", "multiple_others", "2girls", "3girls", "4girls", "5girls", "6+girls",
+    "2boys", "3boys", "4boys", "5boys", "6+boys", "hetero", "yuri", "yaoi", "group_sex", "threesome",
+    "ffm_threesome", "mmf_threesome", "gangbang", "orgy", "faceless_male", "disembodied_penis", "pov_hands",
+]
+# Someone else's hand on the character, a grab or a hold ("hand_on_another's_head",
+# "hands_on_another's_shoulders", "grabbing_another's_breast",
+# "holding_another's_wrist"), by prefix: every member the tagger knows is
+# watched, whichever its snapshot has. The character's own hand is "hand_on_own_*".
+_PEOPLE_FAMILIES = ("grabbing_another's_", "hand_on_another's_", "hands_on_another's_", "holding_another's_")
+# Tags that are one person each, so two of them in one image are two people.
+# "1other" is a person the tagger reads as neither a girl nor a boy.
+_PEOPLE_PAIRS = [("1girl", "1boy"), ("1girl", "1other"), ("1boy", "1other")]
+_WATCHED = set(_TAGGER_BLOCK) | set(_PEOPLE_BLOCK) | {tag for pair in _PEOPLE_PAIRS for tag in pair}
+# What each people check reads, for a clip's frame with two readings (see
+# _people). Checks one misread person fires together read the same thing: a
+# head count and the tags Danbooru implies from it ("2girls" and
+# "multiple_girls", "threesome" and "group_sex"), a man's body (a man alone in a
+# cropped close-up is "faceless_male" and "disembodied_penis"), a hand (her own
+# hands, read as someone else's in any family or as "pov_hands") and the pairs,
+# which all come from 1girl, 1boy and 1other. Any other check is its own reading.
+_READINGS = {
+    **dict.fromkeys(["multiple_girls", "2girls", "3girls", "4girls", "5girls", "6+girls"], "girls"),
+    **dict.fromkeys(["multiple_boys", "2boys", "3boys", "4boys", "5boys", "6+boys"], "boys"),
+    **dict.fromkeys(["group_sex", "threesome", "ffm_threesome", "mmf_threesome", "gangbang", "orgy"], "group"),
+    **dict.fromkeys(["faceless_male", "disembodied_penis"], "a man's body"),
+    "pov_hands": "a hand",
+    **dict.fromkeys(("+".join(pair) for pair in _PEOPLE_PAIRS), "a pair"),
+}
+
+
+def is_watched(tag: str) -> bool:
+    """Whether the tagger scores this tag for the age or people check."""
+    return tag in _WATCHED or tag.startswith(_PEOPLE_FAMILIES)
+
+
+def watched_tags(known: Iterable[str]) -> Tuple[List[str], List[str]]:
+    """The minor tags and the people checks (tags, family members, and pairs as
+    "1girl+1boy") a tagger that knows these tag names can run."""
+    names = set(known)
+    minor = [tag for tag in _TAGGER_BLOCK if tag in names]
+    people = [tag for tag in _PEOPLE_BLOCK if tag in names]
+    people += sorted(tag for tag in names if tag.startswith(_PEOPLE_FAMILIES))
+    people += ["+".join(pair) for pair in _PEOPLE_PAIRS if all(tag in names for tag in pair)]
+    return minor, people
+
+
+def unknown_tags(known: Iterable[str]) -> List[str]:
+    """The listed tags, and families as "hand_on_another's_*", that a tagger with
+    these tag names doesn't know, so doesn't check."""
+    names = set(known)
+    listed = dict.fromkeys(_TAGGER_BLOCK + _PEOPLE_BLOCK + [tag for pair in _PEOPLE_PAIRS for tag in pair])
+    missing = [tag for tag in listed if tag not in names]
+    missing += [f"{family}*" for family in _PEOPLE_FAMILIES if not any(tag.startswith(family) for tag in names)]
+    return missing
+
+
+def _highest(frames: List[Mapping[str, float]], tags: List[str], threshold: float) -> Dict[str, float]:
+    """Each of the tags at or above the threshold in any image, at its highest score."""
+    found: Dict[str, float] = {}
+    for tag in tags:
+        scores = [frame[tag] for frame in frames if tag in frame and frame[tag] >= threshold]
+        if scores:
+            found[tag] = max(scores)
+    return found
+
+
+def _listed(found: Dict[str, float]) -> str:
+    return ", ".join(f"{tag}:{score:.2f}" for tag, score in found.items())
+
+
+def _people_in(frame: Mapping[str, float], threshold: float) -> Dict[str, float]:
+    """The people checks one image fires, at their scores: a single tag
+    (_PEOPLE_BLOCK or a _PEOPLE_FAMILIES member) at the threshold, or a whole
+    pair at it ("1girl+1boy", at the lower of the two scores)."""
+    found = {tag: score for tag, score in frame.items()
+             if score >= threshold and (tag in _PEOPLE_BLOCK or tag.startswith(_PEOPLE_FAMILIES))}
+    for pair in _PEOPLE_PAIRS:
+        if all(frame.get(tag, 0.0) >= threshold for tag in pair):
+            found["+".join(pair)] = min(frame[tag] for tag in pair)
+    return found
+
+
+def _reading(check: str) -> str:
+    """What a people check reads (see _READINGS). Any "another's" tag is a hand on
+    or holding someone, however it was added, so it can't count twice."""
+    if check.startswith(_PEOPLE_FAMILIES) or "another's_" in check:
+        return "a hand"
+    return _READINGS.get(check, check)
+
+
+def _people(frames: List[Mapping[str, float]], threshold: float) -> Dict[str, float]:
+    """The people checks that refuse these images, each at its highest score.
+
+    One image (a picture, a video's source) is refused on any check. Several are
+    one clip's sampled frames, and those take a check in two frames, or in one
+    frame a check well above the threshold (halfway to 1) or checks with two
+    different readings ("hetero" and "1girl+1boy", not "2girls" and
+    "multiple_girls"): a partner in the clip stays for more than one still or
+    shows up in more than one way, while one blurred still read as two people
+    shouldn't cost a solo clip.
+    """
+    hits = [found for found in (_people_in(frame, threshold) for frame in frames) if found]
+    strong = threshold + (1 - threshold) / 2
+
+    def one_frame_enough(found: Dict[str, float]) -> bool:
+        return any(score >= strong for score in found.values()) or len({_reading(check) for check in found}) > 1
+
+    if len(hits) < min(2, len(frames)) and not any(one_frame_enough(found) for found in hits):
+        return {}
+    names = {check for found in hits for check in found}
+    order = list(_PEOPLE_BLOCK) + sorted(name for name in names if name.startswith(_PEOPLE_FAMILIES))
+    order += ["+".join(pair) for pair in _PEOPLE_PAIRS]
+    return {check: max(found[check] for found in hits if check in found) for check in order if check in names}
+
+
+def tag_refusal(frames: Iterable[Mapping[str, float]], threshold: float,
+                people_threshold: float) -> Optional[str]:
+    """Why tagged images are refused, or None. Takes each image's scores by tag
+    name (AnimeTagger.scores), so it decides without the model; several images
+    are one clip's frames.
+
+    A childlike tag in any image refuses as "apparent minor: <tag>:<score>, ...",
+    first, since the app files those as minor content. Otherwise a second person
+    refuses as "people:<check>:<score>, ..." (see _people). Each tag is listed
+    once, at its highest score. Nothing turns either check off.
+    """
+    frames = list(frames)
+    for frame in frames:
+        # A broken model must not pass everything: the caller fails closed.
+        if any(not math.isfinite(score) for score in frame.values()):
+            raise ValueError("the tagger returned a score that isn't a number")
+    minor = _highest(frames, _TAGGER_BLOCK, threshold)
+    if minor:
+        return f"apparent minor: {_listed(minor)}"
+    found = _people(frames, people_threshold)
+    return f"people:{_listed(found)}" if found else None
+
+
+def label_refusal(reason: str, checked: str) -> str:
+    """A tagger refusal with what was checked after its kind: "apparent minor
+    (frames): loli:0.91", "people (source):2girls:0.80"."""
+    kind, _, found = reason.partition(":")
+    return f"{kind} ({checked}):{found}"
 
 
 class AnimeTagger:
-    """SmilingWolf WD tagger (ONNX) used as an apparent-age check on anime images.
+    """SmilingWolf WD tagger (ONNX): an apparent-age check on anime images, and a
+    people count on every image (see _PEOPLE_BLOCK).
 
     Hive's demographic model reads realistic faces; drawn faces need a model
-    trained on drawn images. https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3
+    trained on drawn images. Counting people doesn't depend on drawn faces, so
+    the people check runs on realistic images too.
+    https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3
     """
 
-    def __init__(self, repo: str, threshold: float):
+    def __init__(self, repo: str, threshold: float, people_threshold: float):
         self.repo = repo
         self.threshold = threshold
+        self.people_threshold = people_threshold
         self._session = None
         self._tags: List[str] = []
         self._watch: List[int] = []
@@ -818,11 +975,18 @@ class AnimeTagger:
         tags_path = hf_hub_download(self.repo, "selected_tags.csv")
         with open(tags_path, newline="", encoding="utf-8") as handle:
             self._tags = [row["name"] for row in csv.DictReader(handle)]
-        self._watch = [i for i, name in enumerate(self._tags) if name in _TAGGER_BLOCK]
-        known = [self._tags[i] for i in self._watch]
-        log.info("Anime tagger watching %s", ", ".join(known) or "nothing (no matching tags!)")
-        if not known:
+        self._watch = [i for i, name in enumerate(self._tags) if is_watched(name)]
+        minor, people = watched_tags(self._tags)
+        log.info("Anime tagger watching %s", ", ".join(minor) or "nothing (no matching tags!)")
+        log.info("People check watching %s at %s", ", ".join(people) or "nothing (no matching tags!)",
+                 self.people_threshold)
+        unknown = unknown_tags(self._tags)
+        if unknown:
+            log.info("Not among %s's tags, so not checked: %s", self.repo, ", ".join(unknown))
+        if not minor:
             raise RuntimeError(f"{self.repo} knows none of the blocked tags; pick another tagger")
+        if not people:
+            raise RuntimeError(f"{self.repo} knows none of the people tags; pick another tagger")
         # ANIME_TAGGER_DEVICE=cpu keeps the tagger off a GPU that Wan needs whole.
         if os.environ.get("ANIME_TAGGER_DEVICE", "").lower() == "cpu":
             providers = ["CPUExecutionProvider"]
@@ -845,28 +1009,45 @@ class AnimeTagger:
         array = np.asarray(square, dtype=np.float32)[:, :, ::-1]
         return np.expand_dims(array, axis=0)
 
-    def flagged(self, images: Iterable[Image.Image]) -> List[str]:
-        """Blocked tags found in any of the images (empty when all are fine)."""
+    def load(self) -> None:
         with self._lock:
             self._load()
-            found: List[str] = []
+
+    def scores(self, images: Iterable[Image.Image]) -> List[Dict[str, float]]:
+        """The watched tags' scores for each image, by tag name."""
+        with self._lock:
+            self._load()
+            out: List[Dict[str, float]] = []
             input_name = self._session.get_inputs()[0].name
             output_name = self._session.get_outputs()[0].name
             for image in images:
                 scores = self._session.run([output_name], {input_name: self._prepare(image)})[0][0]
-                for index in self._watch:
-                    if float(scores[index]) >= self.threshold:
-                        found.append(f"{self._tags[index]}:{float(scores[index]):.2f}")
-            return found
+                out.append({self._tags[index]: float(scores[index]) for index in self._watch})
+            return out
+
+    def refusal(self, images: Iterable[Image.Image]) -> Optional[str]:
+        """Why the images (one picture, or one clip's frames) are refused (see
+        tag_refusal), or None."""
+        return tag_refusal(self.scores(images), self.threshold, self.people_threshold)
+
+
+def _threshold(name: str, default: str) -> float:
+    """A tagger threshold from the environment. Scores run from 0 to 1, so 0
+    would refuse everything and 1 or more nothing: either stops the worker."""
+    value = float(os.environ.get(name, default))
+    if not 0 < value < 1:
+        raise ValueError(f"{name} must be between 0 and 1, not {value}")
+    return value
 
 
 def tagger_from_env() -> Optional[AnimeTagger]:
     if os.environ.get("ANIME_TAGGER", "1") == "0":
-        log.warning("ANIME_TAGGER=0: no apparent-age tagger, so the worker refuses all work with real models")
+        log.warning("ANIME_TAGGER=0: no apparent-age or people tagger, so the worker refuses all work with real models")
         return None
     return AnimeTagger(
         repo=os.environ.get("ANIME_TAGGER_REPO", "SmilingWolf/wd-eva02-large-tagger-v3"),
-        threshold=float(os.environ.get("ANIME_TAGGER_THRESHOLD", "0.3")),
+        threshold=_threshold("ANIME_TAGGER_THRESHOLD", "0.3"),
+        people_threshold=_threshold("PEOPLE_TAGGER_THRESHOLD", "0.35"),
     )
 
 

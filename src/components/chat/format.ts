@@ -1,5 +1,7 @@
 // Small formatting helpers for the chat screens.
 
+import { studioPerson } from "@/lib/studio";
+
 // Where "Explore characters" buttons on the chat screens go.
 export const EXPLORE_HREF = "/discover";
 
@@ -107,12 +109,46 @@ export function replyStarters(last: { role: string; hasPhoto: boolean } | null):
   return [];
 }
 
+export type PhotoIdea = { label: string; hint: string };
+
 // Ideas for "Send me a photo". Each is passed to the photo endpoint as its hint,
 // which runs the same safety checks as anything typed.
-export const PHOTO_IDEAS = [
+export const PHOTO_IDEAS: PhotoIdea[] = [
   { label: "A selfie, right now", hint: "a casual selfie right now" },
   { label: "Tonight's outfit", hint: "showing off tonight's outfit in a mirror" },
   { label: "At the beach", hint: "at the beach in the golden hour sun" },
   { label: "Getting ready for bed", hint: "getting ready for bed, soft lamp light" },
   { label: "After the gym", hint: "after a workout at the gym" },
 ];
+
+// Quick actions for every confirmed adult: the whole site is uncensored, so
+// there's nothing to turn on first. The photo endpoint screens these like
+// anything typed, charges the same, and refuses photos altogether to a held or
+// unconfirmed account (the server decides, not this list). Worded for who the
+// character is (explicitPhotoIdeas); this is the list for a woman or anyone
+// who isn't plainly a man, and the first idea is the same for everyone.
+export const EXPLICIT_PHOTO_IDEAS: PhotoIdea[] = [
+  { label: "Send me a nude", hint: "a nude photo, a sensual pose in soft bedroom light" },
+  { label: "Topless", hint: "topless, a teasing look over one shoulder" },
+  { label: "Lingerie", hint: "in lace lingerie on the bed, warm lamp light" },
+  { label: "In the shower", hint: "nude in the shower, steam and wet skin" },
+];
+
+// A man's: shirtless rather than topless, underwear rather than lingerie.
+export const EXPLICIT_PHOTO_IDEAS_MAN: PhotoIdea[] = [
+  EXPLICIT_PHOTO_IDEAS[0],
+  { label: "Shirtless", hint: "shirtless, a teasing look over one shoulder" },
+  { label: "Underwear", hint: "in fitted boxer briefs on the bed, warm lamp light" },
+  EXPLICIT_PHOTO_IDEAS[3],
+];
+
+// The explicit quick actions for a character, by their stored gender.
+export function explicitPhotoIdeas(gender: string | null | undefined): PhotoIdea[] {
+  return studioPerson(gender) === "man" ? EXPLICIT_PHOTO_IDEAS_MAN : EXPLICIT_PHOTO_IDEAS;
+}
+
+// The label to show while a photo from a known idea is being taken.
+export function photoIdeaLabel(hint: string | null) {
+  if (!hint) return null;
+  return [...PHOTO_IDEAS, ...EXPLICIT_PHOTO_IDEAS, ...EXPLICIT_PHOTO_IDEAS_MAN].find((idea) => idea.hint === hint)?.label ?? null;
+}

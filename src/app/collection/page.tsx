@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
-import { CameraIcon, ChatIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, GalleryIcon, PlayIcon } from "@/components/icons";
+import { CameraIcon, ChatIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, FilmIcon, GalleryIcon, PlayIcon } from "@/components/icons";
 import { Button, ButtonLink, Chip, EmptyState, PageHeader, cx, isStaticArt } from "@/components/ui";
 import { FOCUS_RING, GridSkeleton, ScrollRow } from "@/components/home/browse";
 import { PAGE, PAGE_STACK, useCatalogue } from "@/components/home/catalogue";
@@ -13,21 +13,27 @@ import { ApiError, useApi } from "@/lib/api";
 import type { Character } from "@/lib/characters";
 import type { CollectionMediaDTO, CollectionResponse } from "@/app/api/media/route";
 
-type Kind = "all" | "image" | "video";
+// "studio" is everything made in the Video Studio: keyframes and their clips.
+type Kind = "all" | "image" | "video" | "studio";
 
 const FILTERS: { id: Kind; label: string; icon: ReactNode }[] = [
   { id: "all", label: "All", icon: <GalleryIcon className="h-4 w-4" /> },
   { id: "image", label: "Photos", icon: <CameraIcon className="h-4 w-4" /> },
   { id: "video", label: "Videos", icon: <PlayIcon className="h-4 w-4" /> },
+  { id: "studio", label: "Studio", icon: <FilmIcon className="h-4 w-4" /> },
 ];
 
 const EMPTY: Record<Kind, { title: string; body: string }> = {
   all: {
     title: "Your collection is empty",
-    body: "Every photo and video you get in a chat is saved here. Ask someone for a photo to start.",
+    body: "Every photo and video from your chats and the Video Studio is saved here. Ask someone for a photo to start.",
   },
   image: { title: "No photos yet", body: "Ask for a photo in any chat and it'll be saved here." },
-  video: { title: "No videos yet", body: "Animate a photo in a chat and the video will be saved here." },
+  video: { title: "No videos yet", body: "Animate a photo in a chat or the Video Studio and the video will be saved here." },
+  studio: {
+    title: "No studio scenes yet",
+    body: "Set a scene in the Video Studio and bring it to life. Every frame and clip you make lands here.",
+  },
 };
 
 function DownloadIcon({ className = "h-5 w-5" }: { className?: string }) {
@@ -48,7 +54,11 @@ function formatDate(iso: string) {
 }
 
 function describe(item: CollectionMediaDTO, person: Character | undefined) {
-  return `${item.kind === "video" ? "Video" : "Photo"} from ${person?.name ?? "a removed character"}, ${formatDate(item.createdAt)}`;
+  const what = item.kind === "video" ? "Video" : "Photo";
+  const who = person?.name ?? "a removed character";
+  return item.origin === "studio"
+    ? `Studio ${what.toLowerCase()} of ${who}, ${formatDate(item.createdAt)}`
+    : `${what} from ${who}, ${formatDate(item.createdAt)}`;
 }
 
 // Portraits are our own art, so they come resized (a 40px circle never
@@ -109,6 +119,12 @@ function Tile({
       {item.kind === "video" ? (
         <span className="absolute right-2.5 top-2.5 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur">
           <PlayIcon className="h-4 w-4" />
+        </span>
+      ) : null}
+      {item.origin === "studio" ? (
+        <span className="absolute left-2.5 top-2.5 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-white backdrop-blur">
+          <FilmIcon className="h-3 w-3" />
+          Studio
         </span>
       ) : null}
       <span className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-2.5 pb-2.5 pt-10 text-left">
@@ -188,7 +204,9 @@ function Lightbox({
         <div className="min-w-0">
           <p className="truncate text-sm font-bold text-white">{person?.name ?? "Removed character"}</p>
           <p className="text-xs text-white/60">
-            {item.kind === "video" ? "Video" : "Photo"} · {formatDate(item.createdAt)} · {index + 1} of {count}
+            {item.origin === "studio" ? "Studio " : ""}
+            {item.origin === "studio" ? (item.kind === "video" ? "video" : "frame") : item.kind === "video" ? "Video" : "Photo"} ·{" "}
+            {formatDate(item.createdAt)} · {index + 1} of {count}
           </p>
         </div>
         {item.url ? (
@@ -250,12 +268,20 @@ function Lightbox({
         ) : null}
       </div>
 
-      <div className="flex justify-center px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4">
+      <div className="flex flex-wrap justify-center gap-3 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4">
         {person && item.characterId ? (
-          <ButtonLink href={`/date/${encodeURIComponent(item.characterId)}`} size="lg" className="shadow-[0_8px_24px_rgba(255,79,139,0.35)]">
-            <ChatIcon className="h-5 w-5" />
-            Open chat with {person.name}
-          </ButtonLink>
+          <>
+            {item.origin === "studio" ? (
+              <ButtonLink href={`/studio?character=${encodeURIComponent(item.characterId)}`} size="lg" variant="secondary">
+                <FilmIcon className="h-5 w-5" />
+                New scene
+              </ButtonLink>
+            ) : null}
+            <ButtonLink href={`/date/${encodeURIComponent(item.characterId)}`} size="lg" className="shadow-[0_8px_24px_rgba(255,79,139,0.35)]">
+              <ChatIcon className="h-5 w-5" />
+              Open chat with {person.name}
+            </ButtonLink>
+          </>
         ) : (
           <p className="text-sm text-white/60">This character is no longer available, so the chat is closed.</p>
         )}
@@ -272,7 +298,8 @@ function messageOf(error: unknown, fallback: string) {
 
 function query(kind: Kind, before?: string) {
   const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
-  if (kind !== "all") params.set("kind", kind);
+  if (kind === "studio") params.set("origin", "studio");
+  else if (kind !== "all") params.set("kind", kind);
   if (before) params.set("before", before);
   return `/api/media?${params}`;
 }
@@ -291,7 +318,7 @@ function Collection() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   // Photo and video counts, known once the whole collection has loaded under
   // "All" (the API pages, so a partial list can't count). Kept per session.
-  const [counts, setCounts] = useState<{ key: string; image: number; video: number } | null>(null);
+  const [counts, setCounts] = useState<{ key: string; image: number; video: number; studio: number } | null>(null);
   const [more, setMore] = useState<{ busy: boolean; error?: string }>({ busy: false });
   const [open, setOpen] = useState<number | null>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
@@ -308,7 +335,8 @@ function Collection() {
         setLoaded({ key, items: page.media, hasMore: page.hasMore });
         if (kind === "all" && !page.hasMore) {
           const image = page.media.filter((item) => item.kind === "image").length;
-          setCounts({ key: sessionKey, image, video: page.media.length - image });
+          const studio = page.media.filter((item) => item.origin === "studio").length;
+          setCounts({ key: sessionKey, image, video: page.media.length - image, studio });
         }
       } catch (error) {
         if (!cancelled) setLoaded({ key, items: [], hasMore: false, error: messageOf(error, "Couldn't load your collection. Check your connection.") });
@@ -376,7 +404,7 @@ function Collection() {
     body = (
       <LoginPrompt
         title="Log in to see your collection"
-        body="Every photo and video you get in your chats is saved here, and only you can see it."
+        body="Every photo and video from your chats and the Video Studio is saved here, and only you can see it."
         image="/hero/hero-girls-pool.jpg"
       />
     );
@@ -396,10 +424,17 @@ function Collection() {
         title={EMPTY[kind].title}
         body={EMPTY[kind].body}
         action={
-          <ButtonLink href={kind === "all" ? "/discover" : "/chat"} size="lg">
-            <ChatIcon className="h-5 w-5" />
-            {kind === "all" ? "Find someone to chat with" : "Go to your chats"}
-          </ButtonLink>
+          kind === "studio" ? (
+            <ButtonLink href="/studio" size="lg">
+              <FilmIcon className="h-5 w-5" />
+              Open the Video Studio
+            </ButtonLink>
+          ) : (
+            <ButtonLink href={kind === "all" ? "/discover" : "/chat"} size="lg">
+              <ChatIcon className="h-5 w-5" />
+              {kind === "all" ? "Find someone to chat with" : "Go to your chats"}
+            </ButtonLink>
+          )
         }
       />
     );
@@ -439,18 +474,18 @@ function Collection() {
       <PageHeader
         accent="My"
         title="Collection"
-        subtitle="Every photo and video you've received in your chats. Only you can see them."
+        subtitle="Every photo and video from your chats and the Video Studio. Only you can see them."
       />
       {session ? (
         <div className="-mb-2 flex flex-col gap-3 sm:-mb-3">
-          <div className="flex gap-2" role="group" aria-label="Show">
+          <ScrollRow label="Show" watch={FILTERS.length}>
             {FILTERS.map((filter) => {
               const count = countOf(filter.id);
               return (
                 <Chip
                   key={filter.id}
                   active={kind === filter.id}
-                  className={FOCUS_RING}
+                  className={cx("snap-start", FOCUS_RING)}
                   onClick={() => {
                     setKind(filter.id);
                     setMore({ busy: false });
@@ -465,7 +500,7 @@ function Collection() {
                 </Chip>
               );
             })}
-          </div>
+          </ScrollRow>
           {everyone.length > 1 ? (
             <ScrollRow label="Show one character" watch={everyone.length}>
               <Chip active={!shownWho} onClick={() => setWho(null)} className={cx("snap-start", FOCUS_RING)}>

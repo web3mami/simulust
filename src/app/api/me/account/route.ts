@@ -1,12 +1,12 @@
 import { and, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { legalHoldUntil } from "@/server/media";
-import { requireUser } from "@/server/auth";
+import { identityHash, requireUser } from "@/server/auth";
 import { db } from "@/server/db";
 import { characters, deletedIdentities, media, moderationEvents, orders, reports, users } from "@/server/db/schema";
-import { identityHash } from "@/server/auth";
 import { HttpError, readJson, route } from "@/server/http";
 import { rateLimit } from "@/server/ratelimit";
+import { clearSessionCookie, syncHeldCookie } from "@/server/sessions";
 import { deleteObject } from "@/server/storage";
 
 const body = z.object({
@@ -87,11 +87,13 @@ async function underReview(userId: string, now: Date) {
 }
 
 // Deletes the account and everything that cascades from it: profile,
-// characters, chats, memories, media, credits and age-check outcomes. Orders
+// characters, chats, memories, media, credits, age-check outcomes and every
+// signed-in session (the username is free again afterwards). Orders
 // are kept, unlinked from the account, because payment records are needed for
 // tax; open checkouts expire so they can't be paid with no one to credit.
 // Stored files go first, so a failure leaves the account intact to retry
-// rather than orphaning files nobody can find again.
+// rather than orphaning files nobody can find again. A held account's browser
+// keeps its mark, so signing up again from it starts held too.
 export const DELETE = route(async (request: Request) => {
   const user = await requireUser(request);
   await readJson(request, body);
@@ -140,5 +142,5 @@ export const DELETE = route(async (request: Request) => {
       .where(and(eq(orders.userId, user.id), eq(orders.status, "pending"), isNull(orders.signature)));
     await tx.delete(users).where(eq(users.id, user.id));
   });
-  return Response.json({ ok: true });
+  return syncHeldCookie(request, clearSessionCookie(Response.json({ ok: true })), user);
 });

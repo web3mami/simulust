@@ -25,7 +25,9 @@ jobs:
           cache: npm
 
       # The text-safety tests run the GPU worker's prompt screen to prove it
-      # refuses what the app refuses; 3.11 matches the worker's image.
+      # refuses what the app refuses, and src/server/worker-safety.test.ts runs
+      # its tagger tests (workers/media/test_safety.py) under npm test; 3.11
+      # matches the worker's image.
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"

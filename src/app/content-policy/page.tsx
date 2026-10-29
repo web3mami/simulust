@@ -6,7 +6,7 @@ export const metadata: Metadata = { title: "Content Policy · Simulust" };
 
 export default function ContentPolicyPage() {
   return (
-    <DocPage title="Content Policy" updated="October 26, 2026">
+    <DocPage title="Content Policy" updated="October 28, 2026">
       <p>
         Simulust is for consenting adults exploring fiction with AI characters. Explicit content between fictional
         adults is allowed, within the rules below. These rules apply to everything: messages, character profiles,
@@ -15,7 +15,11 @@ export default function ContentPolicyPage() {
 
       <h2>Adults only</h2>
       <ul>
-        <li>Every user must be 18 or older. Explicit content needs a completed ID check.</li>
+        <li>
+          Every user must be 18 or older. Everyone gives a date of birth before entering and again when creating an
+          account, and explicit content is only for signed-in accounts that have confirmed they&apos;re adults. Anyone
+          who says they&apos;re under 18 has explicit content paused while we review the account.
+        </li>
         <li>
           Every character must be 18 or older, and must look, talk and act like an adult. That includes anime and other
           stylized characters.
@@ -55,9 +59,11 @@ export default function ContentPolicyPage() {
 
       <h2>What is allowed</h2>
       <p>
-        Consensual fantasies between fictional adults, including explicit ones, once you&apos;re verified and have
-        turned explicit content on. You set the pace and the boundaries; characters follow your lead, and you can tell a
-        character to stop or change direction at any time.
+        Consensual fantasies between fictional adults, including nude art, explicit chat and explicit videos you make
+        in the Video Studio. Simulust is uncensored for every signed-in adult; there&apos;s no explicit setting to turn
+        on. Every image and video shows one fictional adult character; you can&apos;t upload photos or add real people.
+        You set the pace and the boundaries; characters follow your lead, and you can tell a character to stop or
+        change direction at any time.
       </p>
 
       <h2>How we enforce this</h2>

@@ -15,8 +15,10 @@ import { COSTS } from "@/lib/pricing";
 // the request after charging.
 export const maxDuration = 300;
 
-// Creator portraits. They are clothed and tasteful, so anyone logged in can make
-// a character before verifying their age; explicit photos come later in chat.
+// Creator portraits: the character's regular art, which is shown without the
+// explicit check, so it's never nude (moderated with allowExplicit off). Anyone
+// signed in can make one; a confirmed adult's may be suggestive (lingerie), and
+// the nude portrait and explicit photos are separate, through their own routes.
 export const POST = route(async (request: Request) => {
   const user = await requireUser(request);
   await rateLimit(`portrait:${user.id}`, 20, 3600);

@@ -1,5 +1,7 @@
-// Local-development sign-in when Privy isn't configured. The server ignores this
-// cookie in production.
+// Local development: the server also accepts a dev handle from this cookie (or
+// the x-dev-user header) when NODE_ENV isn't production. Nothing in the app sets
+// it any more (everyone signs up with a username and password), but a cookie
+// left from earlier is cleared on sign-out so it can't sign the browser back in.
 
 export const DEV_USER_COOKIE = "simulust-dev-user";
 

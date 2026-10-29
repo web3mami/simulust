@@ -12,6 +12,7 @@ import {
   orders,
   profiles,
   reports,
+  sessions,
   threads,
   users,
 } from "@/server/db/schema";
@@ -79,6 +80,11 @@ export const GET = route(async (request: Request) => {
     .from(ageChecks)
     .where(eq(ageChecks.userId, user.id))
     .orderBy(desc(ageChecks.createdAt));
+  const sessionRows = await database
+    .select({ createdAt: sessions.createdAt, expiresAt: sessions.expiresAt })
+    .from(sessions)
+    .where(eq(sessions.userId, user.id))
+    .orderBy(asc(sessions.createdAt));
   const reportRows = await database
     .select({ id: reports.id, kind: reports.kind, target: reports.target, status: reports.status, createdAt: reports.createdAt })
     .from(reports)
@@ -91,15 +97,21 @@ export const GET = route(async (request: Request) => {
     messagesByThread.set(message.threadId, list);
   }
 
+  // Fields picked one by one: the password and recovery-code hashes are
+  // credentials, never part of an export.
   const data = {
     exportedAt: new Date().toISOString(),
     user: {
       id: account.id,
       login: account.privyId,
+      username: account.username,
       displayName: account.displayName,
       walletAddress: account.walletAddress,
       ageStatus: account.ageStatus,
       ageVerifiedAt: account.ageVerifiedAt,
+      // When they confirmed a date of birth of 18 or over (the date is never kept).
+      ageAttestedAt: account.ageAttestedAt,
+      explicitHoldAt: account.explicitHoldAt,
       memberUntil: account.memberUntil,
       settings: account.settings,
       createdAt: account.createdAt,
@@ -130,6 +142,8 @@ export const GET = route(async (request: Request) => {
     ledger: ledgerRows,
     // Only outcomes: no ID documents or birth dates are ever stored.
     ageChecks: checkRows,
+    // Signed-in browsers, by when they signed in and when they'll be signed out.
+    sessions: sessionRows,
     reportsFiled: reportRows,
   };
 
