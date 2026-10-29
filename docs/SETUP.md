@@ -52,7 +52,7 @@ get the vendor's written OK before you build on them.
 |---|---|---|---|
 | **[prod] Public URL** | | `APP_URL` | The public `https://` address (not localhost). Video callbacks, Veriff's return link and the Solana Pay icon are built from it. |
 | **[prod] Database** | Supabase (Postgres + pgvector) | `DATABASE_URL`, `AUTO_MIGRATE` | Use the transaction-pooler string. Run `npm run db:migrate` on every deploy: it applies `drizzle/` and seeds the official characters. Hosts without a deploy step can set `AUTO_MIGRATE=1` to do the same on first connection, but migrations take no lock, so avoid it when several instances can boot at once. |
-| **[prod] Accounts** | Built in | `ADMIN_USER_IDS` | Username and password only, on our own server (below). `ADMIN_USER_IDS` lists the user ids (UUIDs) that get `/admin`: sign up first, then copy your id from `/profile` or the `users` table, set it and redeploy. Only admins can action reports and lift age locks and explicit holds, and admin rights are reset from this list, so they can't be granted in the database; the boot refuses an empty list or an entry that isn't a UUID. |
+| **[prod] Accounts** | Built in | `ADMIN_USER_IDS` | Username and password only, on our own server (below). `ADMIN_USER_IDS` lists the user ids (UUIDs) that get `/admin`. Create the first account against the target database using the bootstrap steps below, then set its UUID before the first deployment. Only admins can action reports and lift age locks and explicit holds, and admin rights are reset from this list, so they can't be granted in the database; the boot refuses an empty list or an entry that isn't a UUID. |
 | **[prod] Wallets** | Privy | `NEXT_PUBLIC_PRIVY_APP_ID`, `AUTH_JWT_PRIVATE_KEY` | Every account gets an embedded Solana wallet through Privy's JWT-based auth. Dashboard steps are below. Set the app id for the build as well as at runtime (the browser gets the build's value), and rebuild after changing it. ⚠ Privy is owned by Stripe, which bans adult businesses; its own AUP bans only *illegal* adult content. Get written OK. |
 | **[prod] Chat model** | DeepInfra or Featherless (OpenRouter pinned to one provider also works) | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_PREMIUM_MODEL`, `LLM_UTILITY_MODEL`, `LLM_EXTRA_BODY` | Open-weight models only: OpenAI, Anthropic and Google don't allow explicit content. ⚠ Their terms are silent on adult fiction, so get written OK. Changing provider is an env change. |
 | Memory embeddings | Same provider, `BAAI/bge-m3` | `EMBED_*` | Must return 1024 dimensions. |
@@ -80,6 +80,45 @@ Replace the model and the last field with your `MODERATION_MODEL` and
 `MODERATION_EXTRA_BODY`.
 
 ### Accounts
+
+#### First administrator and database migrations
+
+Before the first staging deployment, create the administrator in the **staging
+database**. An account in the local PGlite database has a different UUID and
+does not establish an administrator in staging.
+
+1. Set `DATABASE_URL` in your gitignored `.env.local` to the isolated staging
+   database. For the local bootstrap, use `APP_URL=http://localhost:3000`.
+2. Apply migrations and seed the official characters. The standalone migration
+   script does not load `.env.local` automatically; with Node 24, run:
+
+   ```bash
+   node --env-file=.env.local --conditions=react-server --import tsx scripts/migrate.ts
+   ```
+
+   An exported `DATABASE_URL` takes precedence over the file, so unset any stale
+   shell value first. On a deployment host that injects `DATABASE_URL` into the
+   process environment, use `npm run db:migrate`. Run migrations once before
+   deploying instances, rather than from concurrent application starts.
+3. Start a local server connected to that database with development auth
+   shortcuts disabled:
+
+   ```bash
+   ALLOW_DEV_AUTH=0 npm run dev -- --hostname 127.0.0.1
+   ```
+
+4. Open `http://localhost:3000`, sign up through the normal UI, save the recovery
+   code privately, and copy the Account ID from `/profile`. Stop the local
+   server after creating the account.
+5. Set that UUID as `ADMIN_USER_IDS` in the staging project's environment. Set
+   its `APP_URL` to the stable public HTTPS staging URL, and configure all other
+   required services before building and deploying. For devnet staging, set
+   both `SOLANA_CLUSTER` and `NEXT_PUBLIC_SOLANA_CLUSTER` to `devnet` and use
+   devnet RPC endpoints.
+
+Staging runs in production mode and uses the same configuration checks. A build
+with `ALLOW_DEV_BUILD=1` only checks compilation; it cannot serve as a staging
+deployment. Keep staging credentials separate from live production credentials.
 
 Sign-up asks for a username, a password and a date of birth, plus one consent
 tick. The server re-checks the date: under 18 is refused and no account is made;
