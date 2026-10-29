@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { AppShell, useLane } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
-import { BrainIcon, ChatIcon, MoreIcon, PlusIcon } from "@/components/icons";
+import { NudePortraitDialog } from "@/components/create/nude-portrait";
+import { BrainIcon, ChatIcon, MoreIcon, PlusIcon, SparkIcon } from "@/components/icons";
 import { Badge, Button, ButtonLink, EmptyState, PageHeader, cx, isStaticArt } from "@/components/ui";
 import { FOCUS_RING, GRID, GridSkeleton } from "@/components/home/browse";
 import { PAGE, PAGE_STACK, isOwnCharacter, relativeTime, useCatalogue } from "@/components/home/catalogue";
@@ -42,8 +43,9 @@ function CreateCard() {
 const MENU_ITEM =
   "flex h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-medium text-[var(--ink)] hover:bg-white/5 focus:bg-white/5 focus:outline-none";
 
-// The "..." button on a card: chat, memories, delete.
-function CardMenu({ person, onDelete }: { person: Character; onDelete: () => void }) {
+// The "..." button on a card: chat, memories, the nude portrait (every
+// confirmed adult; no switch), delete.
+function CardMenu({ person, onDelete, onNude }: { person: Character; onDelete: () => void; onNude?: () => void }) {
   const [open, setOpen] = useState(false);
   const menuId = useId();
   const wrapper = useRef<HTMLDivElement>(null);
@@ -110,6 +112,20 @@ function CardMenu({ person, onDelete }: { person: Character; onDelete: () => voi
             <BrainIcon className="h-4 w-4 text-[var(--muted)]" />
             Memories
           </Link>
+          {onNude ? (
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onNude();
+              }}
+              className={MENU_ITEM}
+            >
+              <SparkIcon className="h-4 w-4 text-[var(--muted)]" />
+              {person.explicitImage ? "New nude portrait" : "Nude portrait"}
+            </button>
+          ) : null}
           <button
             role="menuitem"
             type="button"
@@ -210,12 +226,16 @@ function DeleteDialog({
 }
 
 function MyAI() {
-  const { ready, session } = useSession();
+  const { ready, session, me } = useSession();
   const { lane } = useLane();
-  const { characters, status, error, retry, remove } = useCatalogue();
+  const { characters, status, error, retry, remove, replace } = useCatalogue();
   const { threads } = useThreads();
   const chats = useMemo(() => threadsByCharacter(threads), [threads]);
   const [deleting, setDeleting] = useState<Character | null>(null);
+  const [nude, setNude] = useState<Character | null>(null);
+  // A confirmed adult with no hold gets nude portraits by default. The server
+  // checks again; this only decides whether to offer them.
+  const explicit = me?.ageVerified === true;
   const own = characters.filter(isOwnCharacter);
   const signedIn = ready && Boolean(session);
 
@@ -262,7 +282,11 @@ function MyAI() {
                 badge={thread ? <Badge tone="muted">Chatting</Badge> : null}
                 meta={thread ? `Last chat ${relativeTime(thread.lastMessageAt)}` : "No chats yet"}
               />
-              <CardMenu person={person} onDelete={() => setDeleting(person)} />
+              <CardMenu
+                person={person}
+                onDelete={() => setDeleting(person)}
+                onNude={explicit ? () => setNude(person) : undefined}
+              />
             </li>
           );
         })}
@@ -275,7 +299,11 @@ function MyAI() {
       <PageHeader
         accent="My"
         title="AI"
-        subtitle="The characters you created. Only you can see them. Open one to chat, or use ⋯ for memories."
+        subtitle={
+          explicit
+            ? "The characters you created. Only you can see them. Open one to chat, or use ⋯ for memories and nude portraits."
+            : "The characters you created. Only you can see them. Open one to chat, or use ⋯ for memories."
+        }
         action={
           signedIn && own.length > 0 ? (
             <ButtonLink href="/create" className="max-sm:hidden">
@@ -288,6 +316,15 @@ function MyAI() {
       {body}
       {/* A short list leaves the page bare; the band fills it with the next step. */}
       {signedIn && status === "ready" && own.length > 0 && own.length < 4 ? <CreatePromo lane={lane} /> : null}
+      {nude ? (
+        <NudePortraitDialog
+          person={nude}
+          heading={nude.explicitImage ? `A new look at ${nude.name}` : `${nude.name}, nothing hidden`}
+          skip={{ label: "Not now", onClick: () => setNude(null) }}
+          finish={{ label: "Done", onClick: () => setNude(null) }}
+          onDrawn={replace}
+        />
+      ) : null}
       {deleting ? (
         <DeleteDialog
           person={deleting}

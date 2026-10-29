@@ -4,16 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import motion from "@/components/chat/chat-motion.module.css";
 import { reportHref } from "@/components/chat/format";
-import {
-  CameraIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  CloseIcon,
-  CoinIcon,
-  FlagIcon,
-  MicIcon,
-  PlayIcon,
-} from "@/components/icons";
+import { CameraIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, CoinIcon, FlagIcon, LockIcon, MicIcon, PlayIcon } from "@/components/icons";
 import { ButtonLink, buttonClass, cx } from "@/components/ui";
 import type { CrisisResource, MediaDTO } from "@/lib/api-types";
 
@@ -48,8 +39,14 @@ export function TypingDots({ name }: { name: string }) {
   );
 }
 
-// What went wrong with the last action, and the one thing that fixes it.
-export function ProblemLine({ problem, onDismiss }: { problem: Problem; onDismiss: () => void }) {
+export const CHAT_PAUSED = "Photos and explicit chat are paused while we review this account.";
+
+// What went wrong with the last action, and the one thing that fixes it. An
+// account on an explicit hold gets the server's "explicit_hold" (or, with
+// `held`, an age error while /api/me already says so): paused, with nothing to
+// click, since confirming an age doesn't lift a hold; a review does.
+export function ProblemLine({ problem, onDismiss, held = false }: { problem: Problem; onDismiss: () => void; held?: boolean }) {
+  const paused = problem.code === "explicit_hold" || (held && problem.code === "age_verification_required");
   let action: ReactNode = null;
   if (problem.code === "insufficient_credits") {
     action = (
@@ -57,10 +54,10 @@ export function ProblemLine({ problem, onDismiss }: { problem: Problem; onDismis
         Get credits
       </ButtonLink>
     );
-  } else if (problem.code === "age_verification_required") {
+  } else if (problem.code === "age_verification_required" && !paused) {
     action = (
       <ButtonLink href="/verify" size="sm">
-        Verify your age
+        Confirm your age
       </ButtonLink>
     );
   } else if (problem.code === "age_locked" || problem.code === "forbidden") {
@@ -70,6 +67,7 @@ export function ProblemLine({ problem, onDismiss }: { problem: Problem; onDismis
       </ButtonLink>
     );
   }
+  const text = paused ? CHAT_PAUSED : problem.text;
   return (
     <div
       role="alert"
@@ -78,7 +76,7 @@ export function ProblemLine({ problem, onDismiss }: { problem: Problem; onDismis
         motion.pop,
       )}
     >
-      <p className="min-w-0 flex-1 basis-48 text-[var(--ink)]">{problem.text}</p>
+      <p className="min-w-0 flex-1 basis-48 text-[var(--ink)]">{text}</p>
       <div className="flex items-center gap-1">
         {action}
         <button
@@ -303,6 +301,11 @@ export function PendingCard({ label, detail, kind = "image", stalled }: { label:
   );
 }
 
+// Why explicit media in the chat comes back locked (no URL): the account is on
+// hold while we review it, or it's an older account that hasn't confirmed its
+// age. There's no explicit switch, so nothing else locks it.
+export type MediaLock = "paused" | "confirm";
+
 // A photo, voice note or video in a message, including its pending and failed
 // states. Photos open full size when tapped; a video shows the photo it came from.
 export function MediaView({
@@ -311,12 +314,14 @@ export function MediaView({
   stalled,
   poster,
   onOpen,
+  lock = "paused",
 }: {
   media: MediaDTO;
   name: string;
   stalled?: boolean;
   poster?: string;
   onOpen?: (media: MediaDTO) => void;
+  lock?: MediaLock;
 }) {
   if (media.status === "pending") {
     const label = stalled
@@ -335,6 +340,30 @@ export function MediaView({
       );
     }
     return <PendingCard label={label} kind={media.kind} stalled={stalled} />;
+  }
+  if (media.locked) {
+    const tile =
+      "flex h-40 w-56 max-w-full flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 bg-[var(--surface)] px-4 text-center text-xs leading-5 text-[var(--muted)]";
+    const label = <span className="font-semibold text-[var(--ink)]">18+ {media.kind === "video" ? "video" : "photo"}</span>;
+    return lock === "confirm" ? (
+      <Link href="/verify" className={cx(tile, "hover:border-[var(--accent)]/60")}>
+        <LockIcon className="h-5 w-5 text-[var(--accent)]" />
+        <span>
+          {label}
+          <br />
+          Confirm your age to see it.
+        </span>
+      </Link>
+    ) : (
+      <div className={tile}>
+        <LockIcon className="h-5 w-5 text-[var(--muted)]" />
+        <span>
+          {label}
+          <br />
+          Paused while we review this account.
+        </span>
+      </div>
+    );
   }
   if (media.status !== "ready" || !media.url) {
     return (

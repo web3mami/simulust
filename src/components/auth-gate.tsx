@@ -1,19 +1,21 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useEffectEvent, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { usePrivy } from "@privy-io/react-auth";
+import { AGE_REFUSED_EVENT, isOpenPath } from "@/components/age-gate";
 import { CloseIcon, HeartIcon, LockIcon } from "@/components/icons";
 import { LoginScreen } from "@/components/login-screen";
 import { isPrivyConfigured } from "@/components/privy-app";
-import { sessionFromPrivyUser, type Session } from "@/lib/session";
+import { WalletSync } from "@/components/wallet-sync";
+import { sessionFromMe, type Session } from "@/lib/session";
 import type { Features, Me, MeResponse } from "@/lib/api-types";
-import { readDevUser, writeDevUser } from "@/lib/dev-user";
+import { writeDevUser } from "@/lib/dev-user";
 import { buttonClass } from "@/components/ui";
 
 type AuthIntent = "login" | "signup";
 
 export type AuthValue = {
+  // The first /api/me has answered: until then nobody knows who this is.
   ready: boolean;
   session: Session | null;
   me: Me | null;
@@ -22,6 +24,8 @@ export type AuthValue = {
   // 403 to everything.
   suspended: boolean;
   refreshMe: () => Promise<void>;
+  // The session is an httpOnly cookie that same-origin requests carry on their
+  // own, so there's no token to attach. Kept for callers that still ask.
   getToken: () => Promise<string | null>;
   signOut: () => void;
   openLogin: () => void;
@@ -38,44 +42,9 @@ export function useSession() {
   return value;
 }
 
-// Loads /api/me whenever the signed-in identity changes. Waits until the login
-// provider is ready, so a hard load asks once instead of once signed out and
-// again signed in.
-function useMe(identity: string | null, getToken: () => Promise<string | null>, ready: boolean) {
-  const [me, setMe] = useState<Me | null>(null);
-  const [features, setFeatures] = useState<Features | null>(null);
-  const [suspended, setSuspended] = useState<Suspension>(false);
-
-  const refreshMe = useCallback(async () => {
-    const token = await getToken();
-    const response = await fetch("/api/me", {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      cache: "no-store",
-    }).catch(() => null);
-    if (response?.status === 403) {
-      const body = (await response.json().catch(() => null)) as { code?: string } | null;
-      setSuspended(body?.code === "age_locked" ? "age_locked" : "policy");
-      setMe(null);
-      return;
-    }
-    if (!response?.ok) return;
-    const body = (await response.json()) as MeResponse;
-    setSuspended(false);
-    setMe(body.me);
-    setFeatures(body.features);
-  }, [getToken]);
-
-  useEffect(() => {
-    if (!ready) return;
-    // Fetch once ready and whenever the signed-in identity changes.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refreshMe();
-  }, [ready, identity, refreshMe]);
-
-  return { me: identity ? me : null, features, suspension: identity ? suspended : false, refreshMe };
-}
-
 type Suspension = false | "policy" | "age_locked";
+
+const noToken = async () => null;
 
 // What every modal here does while open: the page behind stops scrolling,
 // focus moves in (to the control marked data-autofocus, else the panel) and Tab stays
@@ -98,14 +67,14 @@ function useModal(open: boolean, onClose?: () => void) {
     function onKey(event: KeyboardEvent) {
       const box = panel.current;
       if (!box) return;
-      // Keys inside another layer on top (the sign-in provider's own window) are its business.
+      // Keys inside another layer on top (Privy's wallet window) are its business.
       const inside = box.contains(event.target as Node) || event.target === document.body;
       if (event.key === "Escape" && closable && inside) {
         event.preventDefault();
         close();
       } else if (event.key === "Tab" && inside) {
         const focusable = Array.from(
-          box.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), textarea, select, [tabindex]:not([tabindex="-1"])'),
+          box.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), textarea, select:not([disabled]), [tabindex]:not([tabindex="-1"])'),
         );
         if (!focusable.length) return;
         const first = focusable[0];
@@ -155,7 +124,7 @@ function SuspendedNotice({ reason, onSignOut }: { reason: Exclude<Suspension, fa
           <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
             {reason === "age_locked"
               ? "An age check showed a birth date under 18, so the account is locked while we review it. If that's wrong, contact support and we'll look again. Support can also send you a copy of your data or delete it."
-              : "It broke the content policy. To appeal, or to get a copy of your data or have it deleted, contact support and include your account email or wallet address."}
+              : "It broke the content policy. To appeal, or to get a copy of your data or have it deleted, contact support and include your username."}
           </p>
           {/* A locked account can't reach the chat, where crisis resources usually show. */}
           <div className="mt-5 flex gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4">
@@ -191,19 +160,61 @@ function SuspendedNotice({ reason, onSignOut }: { reason: Exclude<Suspension, fa
   );
 }
 
-// Image on the left and the sign-in options on the right (LoginScreen draws
-// both); this is the overlay and the close button.
+function LogoutNotice({ busy, onRetry, onClose }: { busy: boolean; onRetry: () => void; onClose: () => void }) {
+  const panel = useModal(true, onClose);
+  return (
+    <div
+      className="fixed inset-0 z-[60] overflow-y-auto bg-black/75 backdrop-blur-sm"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="logout-error-title"
+      aria-describedby="logout-error-description"
+    >
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div ref={panel} tabIndex={-1} className="w-full max-w-md rounded-3xl border border-[var(--line)] bg-[var(--bg-2)] p-6 text-[var(--ink)] outline-none">
+          <h2 id="logout-error-title" className="text-xl font-bold">Couldn&apos;t log out</h2>
+          <p id="logout-error-description" className="mt-3 text-sm leading-6 text-[var(--muted)]">
+            We couldn&apos;t confirm that your session ended. Check your connection and try again.
+          </p>
+          <div className="mt-6 flex gap-3">
+            <button type="button" onClick={onClose} className={buttonClass("secondary", "md", "flex-1")}>
+              Close
+            </button>
+            <button type="button" data-autofocus disabled={busy} onClick={onRetry} className={buttonClass("primary", "md", "flex-1")}>
+              {busy ? "Logging out…" : "Try again"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Image on the left and the form on the right (LoginScreen draws both); this
+// is the overlay and the close button. Mounted only while open, so every
+// opening starts fresh.
 function LoginModal({
-  open,
   intent,
   onClose,
+  onAccount,
 }: {
-  open: boolean;
   intent: AuthIntent;
   onClose: () => void;
+  onAccount: (me: Me) => void;
 }) {
-  const panel = useModal(open, onClose);
-  if (!open) return null;
+  // While a new recovery code is on screen the modal can't be dismissed by
+  // accident (Escape, a tap outside): it's shown once.
+  const [locked, setLocked] = useState(false);
+  const lockedRef = useRef(false);
+  const lock = useCallback((value: boolean) => {
+    lockedRef.current = value;
+    setLocked(value);
+  }, []);
+  const dismiss = useCallback(() => {
+    if (!lockedRef.current) onClose();
+  }, [onClose]);
+  const panel = useModal(true, dismiss);
+
   return (
     <div
       className="animate-fade-in fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/75 backdrop-blur-sm"
@@ -214,149 +225,167 @@ function LoginModal({
       {/* A press on the dimmed area around the panel closes it. */}
       <div
         className="flex min-h-full items-center justify-center p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] sm:p-6"
-        onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+        onMouseDown={(event) => event.target === event.currentTarget && dismiss()}
       >
         <div
           ref={panel}
           tabIndex={-1}
           className="animate-modal-in relative w-full max-w-[880px] overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--bg-2)] shadow-[0_30px_80px_rgba(0,0,0,0.6)] outline-none"
         >
-          <button
-            type="button"
-            aria-label="Close"
-            className="absolute right-3 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur transition-[background-color,transform] hover:bg-black/70 active:scale-95 motion-reduce:active:scale-100"
-            onClick={onClose}
-          >
-            <CloseIcon />
-          </button>
-          <LoginScreen embedded intent={intent} onSignedIn={onClose} />
+          {locked ? null : (
+            <button
+              type="button"
+              aria-label="Close"
+              className="absolute right-3 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur transition-[background-color,transform] hover:bg-black/70 active:scale-95 motion-reduce:active:scale-100"
+              onClick={onClose}
+            >
+              <CloseIcon />
+            </button>
+          )}
+          <LoginScreen embedded intent={intent} onAccount={onAccount} onLock={lock} onSignedIn={onClose} />
         </div>
       </div>
     </div>
   );
 }
 
-function PrivyAuthProvider({ children }: { children: React.ReactNode }) {
+// One provider for every environment. The session is an httpOnly cookie set
+// by /api/auth/*, so /api/me alone says who's signed in.
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { ready, authenticated, user, logout, getAccessToken } = usePrivy();
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [authIntent, setAuthIntent] = useState<AuthIntent>("login");
-  const named = useRef<string | null>(null);
-
-  const session = ready && authenticated && user ? sessionFromPrivyUser(user) : null;
-  const getToken = useCallback(async () => (authenticated ? getAccessToken() : null), [authenticated, getAccessToken]);
-  const { me, features, suspension, refreshMe } = useMe(session ? user!.id : null, getToken, ready);
-
-  useEffect(() => {
-    if (!ready || !session) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoginOpen(false);
-    if (new URLSearchParams(window.location.search).has("privy_oauth_code")) router.replace("/profile");
-  }, [ready, session, router]);
-
-  // Give new accounts a display name from their login, once.
-  useEffect(() => {
-    if (!me || !session || me.displayName !== "You" || named.current === me.id) return;
-    named.current = me.id;
-    void (async () => {
-      const token = await getToken();
-      await fetch("/api/me", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ displayName: session.display.slice(0, 40) }),
-      });
-      await refreshMe();
-    })();
-  }, [me, session, getToken, refreshMe]);
-
-  function signOut() {
-    void logout();
-  }
-
-  return (
-    <SessionContext.Provider
-      value={{
-        ready,
-        session,
-        me,
-        features,
-        suspended: Boolean(suspension),
-        refreshMe,
-        getToken,
-        signOut,
-        openLogin: () => {
-          setAuthIntent("login");
-          setLoginOpen(true);
-        },
-        openSignup: () => {
-          setAuthIntent("signup");
-          setLoginOpen(true);
-        },
-      }}
-    >
-      {children}
-      <LoginModal open={loginOpen} intent={authIntent} onClose={() => setLoginOpen(false)} />
-      {suspension ? <SuspendedNotice reason={suspension} onSignOut={signOut} /> : null}
-    </SessionContext.Provider>
-  );
-}
-
-// Local development without a Privy app id: sign in with any handle. The server
-// only honours this when NODE_ENV isn't production.
-function DevAuthProvider({ children }: { children: React.ReactNode }) {
-  const [handle, setHandle] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [me, setMe] = useState<Me | null>(null);
+  const [features, setFeatures] = useState<Features | null>(null);
+  const [suspension, setSuspension] = useState<Suspension>(false);
   const [loginOpen, setLoginOpen] = useState(false);
   const [authIntent, setAuthIntent] = useState<AuthIntent>("login");
+  const [logoutError, setLogoutError] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const logoutPending = useRef(false);
+  // Bumped by every sign-in, sign-out and request: an answer is applied only
+  // if nothing newer happened, so a slow /api/me from before signing out can't
+  // sign the browser back in.
+  const generation = useRef(0);
 
-  useEffect(() => {
-    // Read the dev cookie once on mount.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setHandle(readDevUser());
-    setReady(true);
-    function onChange() {
-      setHandle(readDevUser());
-      setLoginOpen(false);
+  const refreshMe = useCallback(async () => {
+    const asked = ++generation.current;
+    const response = await fetch("/api/me", { cache: "no-store" }).catch(() => null);
+    const body = response ? ((await response.json().catch(() => null)) as (MeResponse & { code?: string }) | null) : null;
+    if (asked !== generation.current) return;
+    if (response?.status === 403) {
+      setSuspension(body?.code === "age_locked" ? "age_locked" : "policy");
+      setMe(null);
+    } else if (response?.ok && body) {
+      setSuspension(false);
+      setMe(body.me);
+      setFeatures(body.features);
     }
-    window.addEventListener("simulust-dev-login", onChange);
-    return () => window.removeEventListener("simulust-dev-login", onChange);
+    // Offline or a server error: keep what's known, and stop waiting.
+    setReady(true);
   }, []);
 
-  const getToken = useCallback(async () => null, []);
-  const { me, features, suspension, refreshMe } = useMe(handle, getToken, ready);
-  const session: Session | null = handle ? { provider: "email", display: handle, detail: `dev:${handle}` } : null;
+  useEffect(() => {
+    // Ask once on mount; state is set when the answer arrives.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refreshMe();
+  }, [refreshMe]);
 
-  function devSignOut() {
-    writeDevUser(null);
-    setHandle(null);
-  }
+  // Log in, sign up and password recovery answer with the account: use it
+  // straight away (the cookie is already set).
+  const acceptAccount = useCallback(
+    (next: Me) => {
+      generation.current += 1;
+      setSuspension(false);
+      setMe(next);
+      setReady(true);
+      if (!features) void refreshMe();
+      router.refresh();
+    },
+    [features, refreshMe, router],
+  );
+
+  const signOut = useCallback(() => {
+    if (logoutPending.current) return;
+    logoutPending.current = true;
+    setSigningOut(true);
+    generation.current += 1;
+    void fetch("/api/auth/logout", { method: "POST" })
+      .then((response) => {
+        if (!response.ok) throw new Error("Logout failed");
+        // A dev handle cookie from local development would sign straight back in.
+        writeDevUser(null);
+        generation.current += 1;
+        setMe(null);
+        setSuspension(false);
+        setLogoutError(false);
+        router.refresh();
+      })
+      .catch(() => setLogoutError(true))
+      .finally(() => {
+        logoutPending.current = false;
+        setSigningOut(false);
+      });
+  }, [router]);
+  const closeLogoutError = useCallback(() => setLogoutError(false), []);
+
+  const openLogin = useCallback(() => {
+    setAuthIntent("login");
+    setLoginOpen(true);
+  }, []);
+  const openSignup = useCallback(() => {
+    setAuthIntent("signup");
+    setLoginOpen(true);
+  }, []);
+  const closeLogin = useCallback(() => setLoginOpen(false), []);
+
+  // Someone who gives an under-18 date while signing up is turned away by the
+  // age gate, which covers every page except the legal ones. There the modal
+  // stays and shows the refusal itself.
+  useEffect(() => {
+    function onRefused() {
+      if (!isOpenPath(window.location.pathname)) setLoginOpen(false);
+    }
+    window.addEventListener(AGE_REFUSED_EVENT, onRefused);
+    return () => window.removeEventListener(AGE_REFUSED_EVENT, onRefused);
+  }, []);
+
+  // Stable while the same account is in, so pages keyed on it don't refetch
+  // when only the balance changes.
+  const id = me?.id ?? null;
+  const displayName = me?.displayName ?? "";
+  const username = me?.username ?? null;
+  const session = useMemo(
+    () => (id ? sessionFromMe({ id, displayName, username }) : null),
+    [id, displayName, username],
+  );
+
+  const value = useMemo<AuthValue>(
+    () => ({
+      ready,
+      session,
+      me,
+      features,
+      suspended: Boolean(suspension),
+      refreshMe,
+      getToken: noToken,
+      signOut,
+      openLogin,
+      openSignup,
+    }),
+    [ready, session, me, features, suspension, refreshMe, signOut, openLogin, openSignup],
+  );
 
   return (
-    <SessionContext.Provider
-      value={{
-        ready,
-        session,
-        me,
-        features,
-        suspended: Boolean(suspension),
-        refreshMe,
-        getToken,
-        signOut: devSignOut,
-        openLogin: () => {
-          setAuthIntent("login");
-          setLoginOpen(true);
-        },
-        openSignup: () => {
-          setAuthIntent("signup");
-          setLoginOpen(true);
-        },
-      }}
-    >
+    <SessionContext.Provider value={value}>
       {children}
-      <LoginModal open={loginOpen} intent={authIntent} onClose={() => setLoginOpen(false)} />
-      {suspension ? <SuspendedNotice reason={suspension} onSignOut={devSignOut} /> : null}
+      {/* Keyed by account: Privy re-syncs only when signed-in flips, so a
+          straight switch from one account to another remounts it to sync
+          afresh. Not mounted until /api/me answers, so loading doesn't
+          count as a switch. */}
+      {isPrivyConfigured() && ready ? <WalletSync key={me?.id ?? "signed-out"} /> : null}
+      {loginOpen ? <LoginModal intent={authIntent} onClose={closeLogin} onAccount={acceptAccount} /> : null}
+      {suspension && !logoutError ? <SuspendedNotice reason={suspension} onSignOut={signOut} /> : null}
+      {logoutError ? <LogoutNotice busy={signingOut} onRetry={signOut} onClose={closeLogoutError} /> : null}
     </SessionContext.Provider>
   );
 }
-
-export const AuthProvider = isPrivyConfigured() ? PrivyAuthProvider : DevAuthProvider;

@@ -147,6 +147,13 @@ export const CameraIcon = ({ className }: IconProps) => (
   </Icon>
 );
 
+export const FilmIcon = ({ className }: IconProps) => (
+  <Icon className={className}>
+    <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+    <path d="M7.5 5v14M16.5 5v14M3.5 9.5h4M3.5 14.5h4M16.5 9.5h4M16.5 14.5h4" />
+  </Icon>
+);
+
 export const MicIcon = ({ className }: IconProps) => (
   <Icon className={className}>
     <rect x="9" y="3.5" width="6" height="11" rx="3" />

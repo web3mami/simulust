@@ -1,7 +1,10 @@
-import Image from "next/image";
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
+import { CardArt } from "@/components/home/card-art";
 import type { Character } from "@/lib/characters";
+
+// Kept here too, where every screen already imports its building blocks from.
+export { isStaticArt } from "@/lib/characters";
 
 // Shared building blocks for every screen, so buttons, chips and cards look the
 // same everywhere. Colours come from the tokens in globals.css.
@@ -159,16 +162,11 @@ export function Badge({ tone = "accent", className, ...props }: ComponentProps<"
   );
 }
 
-// A portrait card: the picture fills it, name and age sit on a fade at the
-// bottom, and the persona line shows on hover.
-// Our own art in /public can be resized by next/image; generated media can't.
-export function isStaticArt(src: string) {
-  return /^\/(?:characters|hero|creator)\//.test(src);
-}
-
 // Card widths in the 2-to-6 column grids, so phones never download desktop-size art.
 export const CARD_SIZES = "(min-width: 1536px) 16vw, (min-width: 1280px) 20vw, (min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw";
 
+// A portrait card: the picture fills it, name and age sit on a fade at the
+// bottom, and the persona line shows on hover.
 export function CharacterCard({
   person,
   href = `/date/${person.id}`,
@@ -176,7 +174,10 @@ export function CharacterCard({
   className,
   priority = false,
 }: {
-  person: Pick<Character, "id" | "name" | "age" | "image" | "color" | "role" | "line"> & { body?: string };
+  // explicitImage is optional: only a confirmed adult ever has it (the server
+  // decides), and the card then shows it instead of the portrait, falling back
+  // to the portrait if it won't load.
+  person: Pick<Character, "id" | "name" | "age" | "image" | "explicitImage" | "color" | "role" | "line"> & { body?: string };
   href?: string;
   badge?: ReactNode;
   className?: string;
@@ -190,21 +191,18 @@ export function CharacterCard({
         "group relative block aspect-[3/4] overflow-hidden rounded-2xl bg-[var(--surface)] ring-1 ring-white/5 transition hover:ring-[var(--accent)]/60",
         className,
       )}
-      style={person.image ? undefined : { background: person.color }}
+      style={person.image || person.explicitImage ? undefined : { background: person.color }}
     >
-      {person.image ? (
-        <Image
-          src={person.image}
-          alt=""
-          fill
-          sizes={CARD_SIZES}
-          // Next 16 deprecates `priority`; eager and high fetch priority do the same job.
-          loading={priority ? "eager" : undefined}
-          fetchPriority={priority ? "high" : undefined}
-          unoptimized={!isStaticArt(person.image)}
-          className="object-cover transition duration-500 group-hover:scale-[1.04]"
-        />
-      ) : null}
+      <CardArt
+        person={person}
+        alt=""
+        fill
+        sizes={CARD_SIZES}
+        // Next 16 deprecates `priority`; eager and high fetch priority do the same job.
+        loading={priority ? "eager" : undefined}
+        fetchPriority={priority ? "high" : undefined}
+        className="object-cover transition duration-500 group-hover:scale-[1.04]"
+      />
       {badge ? <div className="absolute left-2.5 top-2.5 z-10 flex gap-1">{badge}</div> : null}
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent px-3 pb-3 pt-14">
         <p className="text-base font-bold text-white">

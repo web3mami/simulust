@@ -1,8 +1,8 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
-import { requireUser } from "@/server/auth";
+import { explicitAllowed, requireUser } from "@/server/auth";
 import { notFound, route } from "@/server/http";
-import { canView, failAbandoned, getMedia, toMediaDTO } from "@/server/media";
+import { canView, failAbandoned, getMedia, isExplicitMedia, lockedMediaDTO, toMediaDTO } from "@/server/media";
 import { refreshVideo } from "@/server/video";
 
 // A poll can finish a video here: the worker poll (30 s), then moderating its
@@ -19,5 +19,6 @@ export const GET = route(async (request: NextRequest, ctx: RouteContext<"/api/me
   const row = await getMedia(id);
   if (!row || !canView(user, row)) throw notFound();
   const current = row.userId !== user.id ? row : row.kind === "video" ? await refreshVideo(row) : await failAbandoned(row);
-  return Response.json({ media: toMediaDTO(current) }, { headers: { "Cache-Control": "no-store" } });
+  const locked = !user.isAdmin && !explicitAllowed(user) && (await isExplicitMedia(current));
+  return Response.json({ media: locked ? lockedMediaDTO(current) : toMediaDTO(current) }, { headers: { "Cache-Control": "no-store" } });
 });

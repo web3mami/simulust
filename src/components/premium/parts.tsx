@@ -236,7 +236,7 @@ const PAY_STEPS = [
   },
   {
     title: "Pay from your wallet",
-    body: "Use your connected wallet, or scan the Solana Pay QR code with Phantom, Solflare or any Solana Pay wallet.",
+    body: "Use the wallet that comes with your account, or scan the Solana Pay QR code with Phantom, Solflare or any Solana Pay wallet.",
   },
   {
     title: "Credits are added for you",
@@ -335,8 +335,8 @@ const FAQ: { q: string; a: ReactNode }[] = [
     q: "How do I pay?",
     a: (
       <>
-        In USDC or SOL on Solana. Pay from your connected wallet, or scan the Solana Pay QR code with Phantom, Solflare
-        or any Solana Pay wallet. Pay from a wallet, not an exchange: a plain transfer without the order&apos;s reference
+        In USDC or SOL on Solana. Pay from the wallet that comes with your account, or scan the Solana Pay QR code with
+        Phantom, Solflare or any Solana Pay wallet. Pay from a wallet, not an exchange: a plain transfer without the order&apos;s reference
         can&apos;t be matched to your order.
       </>
     ),

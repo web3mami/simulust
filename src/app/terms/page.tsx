@@ -6,7 +6,7 @@ export const metadata: Metadata = { title: "Terms of Service · Simulust" };
 
 export default function TermsPage() {
   return (
-    <DocPage title="Terms of Service" updated="October 26, 2026">
+    <DocPage title="Terms of Service" updated="October 28, 2026">
       <p>
         These terms are an agreement between you and [Company legal name], [registered address] (&ldquo;Simulust&rdquo;,
         &ldquo;we&rdquo;). By creating an account or using Simulust you agree to them, to our{" "}
@@ -17,9 +17,21 @@ export default function TermsPage() {
       <ul>
         <li>You must be at least 18, and old enough to view adult content where you live.</li>
         <li>
-          Explicit content (explicit chat, photos, voice notes and video) unlocks only after a one-time ID and selfie
-          check with our verification provider. Using someone else&apos;s ID, or helping a minor get access, ends your
-          account.
+          Before you see anything, we ask for your date of birth. If it&apos;s under 18, we don&apos;t let you in and
+          your device remembers that. When you create an account we ask again and our server checks it; if it&apos;s
+          under 18, no account is made. This is a self-declaration: by giving your date of birth you confirm it&apos;s
+          true. We keep only the time you confirmed it, never the date.
+        </li>
+        <li>
+          Simulust is uncensored. Once you&apos;ve signed up and confirmed you&apos;re 18 or older, all of it is open to
+          you: nude art, explicit chat, photos, voice notes and videos, including those you make in the Video Studio.
+          There&apos;s no separate switch. Visitors who aren&apos;t signed in see only non-nude art. Where the law
+          requires it, we may ask for an ID check with our verification provider before explicit content opens.
+        </li>
+        <li>
+          If you tell us you&apos;re under 18 (on the age screen, in a chat, in a photo request or in Video Studio
+          details), we pause explicit content on your account until our team reviews it, and we may close the account.
+          Giving a false date of birth, using someone else&apos;s ID, or helping a minor get access ends your account.
         </li>
         <li>
           Simulust isn&apos;t available in some countries and regions. Don&apos;t use a VPN or other tool to get around
@@ -27,11 +39,35 @@ export default function TermsPage() {
         </li>
       </ul>
 
-      <h2>2. Your account</h2>
-      <p>
-        You sign in with email, a social account or a Solana wallet. Keep your login secure; you&apos;re responsible
-        for what happens on your account. One person per account, and accounts can&apos;t be sold or shared.
-      </p>
+      <h2>2. Your account and wallet</h2>
+      <ul>
+        <li>
+          You sign up with a username and a password. We don&apos;t ask for your email address, phone number or real
+          name.
+        </li>
+        <li>
+          When you sign up we show you a recovery code, once. Keep it somewhere safe: it&apos;s the only way to set a
+          new password if you forget yours. We don&apos;t have your email and have no other way to confirm an account
+          is yours, so without the code we can&apos;t restore access.
+        </li>
+        <li>
+          Keep your password and recovery code private; you&apos;re responsible for what happens on your account. One
+          person per account, and accounts can&apos;t be sold or shared.
+        </li>
+        <li>
+          Every account comes with its own Solana wallet, created for you by our wallet provider, Privy. You can pay
+          for credits and membership from it.
+        </li>
+        <li>
+          The wallet is yours. We never hold its private key: Privy keeps it split into encrypted shares, and you can
+          export the key to use the wallet anywhere else. We can&apos;t move or recover funds in it.
+        </li>
+        <li>
+          You reach the wallet by signing in to Simulust. If you lose both your password and your recovery code, you
+          lose access to the wallet and anything in it, unless you&apos;ve exported its key.
+        </li>
+        <li>Privy&apos;s own terms also apply to the wallet. [Counsel: link Privy&apos;s end-user terms if required.]</li>
+      </ul>
 
       <h2>3. You&apos;re talking to an AI</h2>
       <ul>
@@ -103,7 +139,9 @@ export default function TermsPage() {
       <h2>8. Ending your account</h2>
       <p>
         You can delete your account at any time in <Link href="/settings">Settings</Link>. Deleting it removes your
-        chats, characters, memories and media, and any remaining credits are lost. We may suspend or close accounts
+        chats, characters, memories and media, and any remaining credits are lost. It doesn&apos;t empty your wallet:
+        move your funds out or export the wallet&apos;s key first, because once the account is gone you can&apos;t
+        sign in to reach it. We may suspend or close accounts
         that break these terms or the content policy. For serious violations, including anything involving minors,
         remaining credits are forfeited and we may report the account to authorities.
       </p>
@@ -124,7 +162,7 @@ export default function TermsPage() {
 
       <h2>11. Changes</h2>
       <p>
-        We&apos;ll tell you about material changes in the app or by email at least 14 days before they take effect.
+        We&apos;ll tell you about material changes in the app at least 14 days before they take effect.
         Continuing to use Simulust after that means you accept the new terms.
       </p>
 

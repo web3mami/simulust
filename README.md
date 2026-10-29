@@ -1,3 +1,9 @@
+# Simulust
+
+Adult AI companions, paid in USDC or SOL on Solana. Setup and launch checklist: [docs/SETUP.md](docs/SETUP.md). Code map and API: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+**Accounts and wallets.** Accounts are a username and password only: no email, social or wallet login. Sign-up asks for a date of birth (18+, re-checked on the server; only the confirmation time is stored) and shows a one-time recovery code, the only way to reset a forgotten password. Every account gets an embedded Solana wallet from Privy through its JWT-based auth: our server signs a short-lived token for the user and publishes the public key at `/api/auth/jwks`, so Privy never sees the password. Without `NEXT_PUBLIC_PRIVY_APP_ID` (local development) there's no wallet and everything else works.
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

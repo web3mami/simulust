@@ -63,6 +63,18 @@ describe("workerRefusalCategory", () => {
     expect(workerRefusalCategory("minority report")).toBe("worker_refused");
   });
 
+  // WPC-5: a second person is the one-person rule, never minor content.
+  it("files the tagger seeing a second person as its own category, never minor", () => {
+    for (const reason of ["people:2girls:0.80", "people:1boy+1girl:0.71, multiple_boys:0.40", "people (source):2girls:0.80", "people (frames):hetero:0.52", "People:couple:0.9"]) {
+      expect(workerRefusalCategory(reason), reason).toBe("one_person");
+    }
+    // An apparent minor still comes first, whatever else it lists.
+    expect(workerRefusalCategory("apparent minor (frames): loli:0.91")).toBe("minor");
+    for (const reason of ["peoples", "term:people", "minor:people"]) {
+      expect(workerRefusalCategory(reason), reason).not.toBe("one_person");
+    }
+  });
+
   it("keeps the worker's image-only words out of the minor category", () => {
     for (const reason of ["term:minor", "term:kid", "term:high school", "term:unassigned U+1CCE9", "term:adult (negative prompt)"]) {
       expect(workerRefusalCategory(reason), reason).toBe("worker_refused");

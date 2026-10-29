@@ -12,9 +12,11 @@ vi.hoisted(() => {
 import { currentUser } from "@/server/auth";
 import { balanceOf, chargeFor } from "@/server/credits";
 import { db } from "@/server/db";
-import { creditBalances, media, moderationEvents } from "@/server/db/schema";
-import { createMedia, getMedia, storeMedia } from "@/server/media";
+import { creditBalances, media, moderationEvents, users } from "@/server/db/schema";
+import { createMedia, getMedia, isExplicitMedia, storeMedia } from "@/server/media";
+import { checkImagePrompt } from "@/server/safety/text";
 import { readLocalObject } from "@/server/storage";
+import { SOLO_ANCHOR, soloMotionPrompt } from "@/server/studio";
 import { blockVideo, completeVideoJob, startVideoJob, videoPrompt, VideoBlocked } from "@/server/video";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, ...new Array(3000).fill(3)]);
@@ -67,6 +69,22 @@ afterEach(() => {
 afterAll(async () => {
   vi.unstubAllGlobals();
   await rm(process.env.MEDIA_DIR!, { recursive: true, force: true });
+});
+
+describe("videoPrompt", () => {
+  it("ends the default motion in the one-person anchor, once, and the worker screen lets it through", () => {
+    const { prompt } = videoPrompt();
+    expect(prompt).toContain(`a slight turn of the head, ${SOLO_ANCHOR}. The same adult from the photo`);
+    expect(prompt.split(SOLO_ANCHOR).length).toBe(2);
+    expect(videoPrompt("   ").prompt).toBe(prompt);
+    expect(checkImagePrompt(prompt)).toEqual({ ok: true });
+  });
+
+  it("anchors a written motion the way the animate route does, also once", () => {
+    expect(videoPrompt(soloMotionPrompt("she turns toward the window, alone")).prompt).toBe(
+      `she turns toward the window, ${SOLO_ANCHOR}. The same adult from the photo, same face and body, natural realistic motion, steady camera, consistent lighting.`,
+    );
+  });
 });
 
 describe("startVideoJob", () => {
@@ -142,6 +160,25 @@ describe("completeVideoJob", () => {
     await expect(completeVideoJob(row, { job_id: row.jobId!, status: "succeeded" })).rejects.toThrow("Video worker 502");
     expect((await getMedia(row.id))?.status).toBe("pending");
     expect(await balanceOf(owner.id)).toBe(140);
+  });
+
+  it("marks the clip explicit when its frames were checked with nudity allowed, whatever its source", async () => {
+    // A confirmed adult's clip of a photo that wasn't itself marked explicit:
+    // the clip's own frames let nudity through, so the clip is explicit.
+    const { owner, row } = await submittedVideo("video-explicit-adult");
+    await (await db()).update(users).set({ ageAttestedAt: new Date() }).where(eq(users.id, owner.id));
+    const done = await completeVideoJob(row, { job_id: row.jobId!, status: "succeeded", video_base64: MP4, frames: [FRAME] });
+    expect(done).toMatchObject({ status: "ready", moderation: { explicit: true } });
+    expect(await isExplicitMedia(done)).toBe(true);
+  });
+
+  it("checks the frames without nudity, and doesn't mark the clip, for an owner who may not see it", async () => {
+    // Put on an explicit hold while the clip rendered.
+    const { owner, row } = await submittedVideo("video-explicit-held");
+    await (await db()).update(users).set({ ageAttestedAt: null, explicitHoldAt: new Date() }).where(eq(users.id, owner.id));
+    const done = await completeVideoJob(row, { job_id: row.jobId!, status: "succeeded", video_base64: MP4, frames: [FRAME] });
+    expect(done).toMatchObject({ status: "ready", moderation: { explicit: false } });
+    expect(await isExplicitMedia(done)).toBe(false);
   });
 
   it("doesn't fetch a result that carries its clip, or a failed one", async () => {

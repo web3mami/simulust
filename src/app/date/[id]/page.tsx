@@ -21,7 +21,7 @@ import motion from "@/components/chat/chat-motion.module.css";
 import { ChatHeader } from "@/components/chat/chat-header";
 import { Composer, type PhotoAction } from "@/components/chat/composer";
 import { ConversationList, recallCharacter, rememberCharacter } from "@/components/chat/conversation-list";
-import { dayKey, dayLabel, EXPLORE_HREF, groupPositions, OPENERS, PHOTO_IDEAS, replyStarters, stampedAt } from "@/components/chat/format";
+import { dayKey, dayLabel, EXPLORE_HREF, groupPositions, OPENERS, photoIdeaLabel, replyStarters, stampedAt } from "@/components/chat/format";
 import {
   DaySeparator,
   MessageBubble,
@@ -31,7 +31,7 @@ import {
   type Extra,
 } from "@/components/chat/message-bubble";
 import { CrisisCard, Lightbox, ProblemLine, Rich, type LightboxPhoto, type Problem } from "@/components/chat/message-parts";
-import { ProfilePanel, type Gallery } from "@/components/chat/profile-panel";
+import { ProfilePanel, type Gallery, type PrivateAccess } from "@/components/chat/profile-panel";
 import { ChatIcon, ChevronDownIcon, ChevronLeftIcon } from "@/components/icons";
 import { Button, ButtonLink, cx, isStaticArt, Panel, Skeleton } from "@/components/ui";
 import { ApiError, useApi, useAuthHeaders } from "@/lib/api";
@@ -85,6 +85,14 @@ function problemOf(error: unknown, fallback = "Something went wrong. Try again."
   if (error instanceof ApiError) return { text: error.message, code: error.code };
   return { text: fallback };
 }
+
+// Errors worth the line above the message box even when they came from a
+// photo's voice or video button: the fix is the same for the whole chat.
+const CHAT_WIDE = new Set(["insufficient_credits", "age_verification_required", "explicit_hold"]);
+
+// Errors that mean what the account may see has changed (a hold was placed,
+// or the age confirmation is gone), so the 18+ actions catch up with /api/me.
+const ACCESS_CHANGED = new Set(["age_verification_required", "explicit_hold", "blocked_minor"]);
 
 async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenerator<ChatStreamEvent> {
   const reader = body.getReader();
@@ -778,6 +786,7 @@ export default function DatePage() {
         const body = (await response.json().catch(() => null)) as ApiErrorBody | null;
         removeMine();
         setProblem({ text: body?.error ?? "Couldn't send that. Try again.", code: body?.code });
+        if (body?.code && ACCESS_CHANGED.has(body.code)) void refreshMe();
         return;
       }
 
@@ -792,6 +801,9 @@ export default function DatePage() {
             finished = true;
             setStreamText(null);
             setMessages((current) => current.filter((message) => message.id !== tempId));
+            // A refusal can change what the account may see (saying you're
+            // under 18 pauses explicit content), so the 18+ actions catch up.
+            void refreshMe();
           }
           setMessages((current) => [...current, event.message]);
         } else if (event.type === "crisis") {
@@ -813,6 +825,7 @@ export default function DatePage() {
           // Model failures are undone server-side, so put the text back to resend.
           if (!savedId || event.code === "model_error") removeMine();
           setProblem({ text: event.error, code: event.code });
+          if (event.code && ACCESS_CHANGED.has(event.code)) void refreshMe();
         }
       }
       if (!finished) {
@@ -860,7 +873,7 @@ export default function DatePage() {
   // `hint` is a short idea for the photo (from the ideas menu or what was typed).
   async function requestPhoto(hint: string | null, fromDraft = false) {
     if (!thread || photoBusy) return;
-    const idea = fromDraft ? hint : (PHOTO_IDEAS.find((item) => item.hint === hint)?.label ?? null);
+    const idea = fromDraft ? hint : photoIdeaLabel(hint);
     setPhotoBusy(true);
     setPhotoPending({ idea, at: new Date().toISOString() });
     setProblem(null);
@@ -880,7 +893,9 @@ export default function DatePage() {
       setListVersion((count) => count + 1);
       void refreshMe();
     } catch (error) {
-      setProblem(problemOf(error, "Couldn't get a photo right now. Try again."));
+      const problem = problemOf(error, "Couldn't get a photo right now. Try again.");
+      setProblem(problem);
+      if (problem.code && ACCESS_CHANGED.has(problem.code)) void refreshMe();
     } finally {
       setPhotoBusy(false);
       setPhotoPending(null);
@@ -897,7 +912,8 @@ export default function DatePage() {
     } catch (error) {
       const { text, code } = problemOf(error, "Couldn't make a voice note. Try again.");
       setExtra(message.id, { busy: undefined, error: text });
-      if (code === "insufficient_credits" || code === "age_verification_required") setProblem({ text, code });
+      if (code && CHAT_WIDE.has(code)) setProblem({ text, code });
+      if (code && ACCESS_CHANGED.has(code)) void refreshMe();
     }
   }
 
@@ -914,7 +930,8 @@ export default function DatePage() {
     } catch (error) {
       const { text, code } = problemOf(error, "Couldn't animate this photo. Try again.");
       setExtra(message.id, { busy: undefined, error: text });
-      if (code === "insufficient_credits" || code === "age_verification_required") setProblem({ text, code });
+      if (code && CHAT_WIDE.has(code)) setProblem({ text, code });
+      if (code && ACCESS_CHANGED.has(code)) void refreshMe();
     }
   }
 
@@ -1018,7 +1035,13 @@ export default function DatePage() {
     const name = person.name;
     const canVoice = Boolean(features?.voice && me?.ageVerified);
     const canAnimate = Boolean(features?.video && me?.ageVerified);
+    // me.ageVerified is the server's answer to "may this account see explicit
+    // content": a confirmed adult with no hold. There's no switch, so that's
+    // everything (photos, the 18+ quick actions, private photos, voice, video).
+    // The server still checks every request itself.
     const canPhoto = Boolean(me?.ageVerified);
+    const held = Boolean(me?.explicitHold);
+    const privateAccess: PrivateAccess = held ? "held" : canPhoto ? "explicit" : "verify";
     const profileOpen = wide ? !profileHidden : sheetOpen;
 
     const balance = shownCredits ? shownCredits.balance.toLocaleString("en-US") : null;
@@ -1039,21 +1062,15 @@ export default function DatePage() {
     }
 
     let banner: ReactNode = null;
-    if (me && !me.ageVerified) {
+    if (held) {
+      banner = <>Explicit chat and photos are paused while we review this account.</>;
+    } else if (me && !me.ageVerified) {
+      // An older account from before sign-up asked for a date of birth.
       banner = (
         <>
-          Explicit chat and photos unlock after age verification.{" "}
+          Explicit chat and photos open up once you confirm your age.{" "}
           <Link href="/verify" className="font-semibold text-[var(--accent)] underline-offset-2 hover:underline">
-            Verify your age
-          </Link>
-        </>
-      );
-    } else if (me && me.ageVerified && !me.settings.explicit) {
-      banner = (
-        <>
-          Explicit chat is off.{" "}
-          <Link href="/settings" className="font-semibold text-[var(--accent)] underline-offset-2 hover:underline">
-            Turn it on in Settings
+            Confirm your age
           </Link>
         </>
       );
@@ -1089,9 +1106,11 @@ export default function DatePage() {
           disabled: photoBusy || !thread || !chatLoaded,
           cost: COSTS.photo,
         }
-      : me && !me.ageVerified
-        ? { kind: "locked" }
-        : null;
+      : held
+        ? { kind: "paused" }
+        : me
+          ? { kind: "confirm" }
+          : null;
 
     const subtitle =
       streamText !== null ? (
@@ -1114,6 +1133,12 @@ export default function DatePage() {
       rememberFocus();
       setLightbox({ photos: gallery.photos, index });
     };
+    // The character's private art, full screen. Reported as the character.
+    const openPrivatePhoto = () => {
+      if (!canPhoto || !person.explicitImage) return;
+      rememberFocus();
+      setLightbox({ photos: [{ id: person.id, kind: "image", status: "ready", url: person.explicitImage }], index: 0 });
+    };
     // Which message a photo came in, so the viewer can offer to animate it.
     const messageFor = (mediaId: string) => messages.find((message) => message.media?.id === mediaId);
     const lightboxPhotos: LightboxPhoto[] = (lightbox?.photos ?? []).map((media) => {
@@ -1127,6 +1152,8 @@ export default function DatePage() {
       canPhoto,
       photoBusy,
       photoReady: chatLoaded && Boolean(thread),
+      privateAccess,
+      onOpenPrivate: openPrivatePhoto,
       gallery,
       onOpenPhoto: openGalleryPhoto,
       galleryRequest,
@@ -1244,6 +1271,7 @@ export default function DatePage() {
                           onVoice={requestVoice}
                           onVideo={requestVideo}
                           onOpenPhoto={openChatPhoto}
+                          lock={held ? "paused" : "confirm"}
                         />
                       );
                     }
@@ -1285,6 +1313,7 @@ export default function DatePage() {
 
         <Composer
           name={name}
+          gender={person.gender}
           draft={draft}
           onDraft={setDraft}
           onSend={() => void send()}
@@ -1292,7 +1321,7 @@ export default function DatePage() {
           ready={chatLoaded && Boolean(thread)}
           maxLength={MAX_LENGTH}
           textareaRef={inputRef}
-          problem={problem ? <ProblemLine problem={problem} onDismiss={() => setProblem(null)} /> : null}
+          problem={problem ? <ProblemLine problem={problem} held={held} onDismiss={() => setProblem(null)} /> : null}
           photo={photoAction}
           starters={starters}
           onStarter={addStarter}
@@ -1310,7 +1339,7 @@ export default function DatePage() {
           {...panelProps}
           onClose={() => setDocked(true)}
           closeLabel="Hide profile"
-          onPhoto={() => void requestPhoto(null)}
+          onPhoto={(hint) => void requestPhoto(hint ?? null)}
         />
       </aside>
     );
@@ -1324,9 +1353,9 @@ export default function DatePage() {
               onClose={closeSheet}
               closeLabel="Close profile"
               closeRef={sheetCloseRef}
-              onPhoto={() => {
+              onPhoto={(hint) => {
                 closeSheet();
-                void requestPhoto(null);
+                void requestPhoto(hint ?? null);
               }}
             />
           </ProfileSheet>

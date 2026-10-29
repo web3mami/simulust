@@ -4,8 +4,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState, type Ref } from "react";
 import motion from "@/components/chat/chat-motion.module.css";
-import { reportHref } from "@/components/chat/format";
-import { BrainIcon, CameraIcon, CloseIcon, CoinIcon, FlagIcon, ShieldIcon } from "@/components/icons";
+import { EXPLICIT_PHOTO_IDEAS, reportHref } from "@/components/chat/format";
+import { useCardArt } from "@/components/home/card-art";
+import { BrainIcon, CameraIcon, CloseIcon, CoinIcon, FilmIcon, FlagIcon, LockIcon, ShieldIcon } from "@/components/icons";
 import { Button, ButtonLink, buttonClass, cx, isStaticArt, Skeleton } from "@/components/ui";
 import type { CharacterDTO, MediaDTO } from "@/lib/api-types";
 import { COSTS } from "@/lib/pricing";
@@ -66,8 +67,145 @@ function Thumb({ media, label, onOpen, more }: { media: MediaDTO; label: string;
   );
 }
 
+// Who may see a character's private (nude) photos: "explicit" for every
+// confirmed adult with no hold (me.ageVerified; there's no switch), "verify"
+// for an older account that hasn't confirmed its age, and "held" while an
+// account that said it was under 18 is reviewed, which nothing on this side
+// unlocks.
+export type PrivateAccess = "explicit" | "verify" | "held";
+
+const NUDE_IDEA = EXPLICIT_PHOTO_IDEAS[0];
+
+// The character's nude art in the private-photos grid. If it won't load (a hold
+// or a takedown since the page loaded), the regular portrait takes its place,
+// as a plain tile with nothing to open.
+function PrivateArt({ person, onOpen }: { person: CharacterDTO; onOpen: () => void }) {
+  const { art, explicit, onError } = useCardArt(person);
+  const tile =
+    "group relative aspect-[3/4] overflow-hidden rounded-xl bg-[var(--surface-2)] ring-1 ring-white/5 focus-visible:outline-2 focus-visible:outline-[var(--accent)]";
+  if (!art) return null;
+  if (!explicit) {
+    return (
+      <div className={tile} style={{ background: person.color }}>
+        <Image src={art} alt="" fill sizes="160px" unoptimized={!isStaticArt(art)} className="object-cover object-top" />
+      </div>
+    );
+  }
+  return (
+    <button type="button" onClick={onOpen} aria-label={`Open ${person.name}'s private photo`} className={tile}>
+      {/* eslint-disable-next-line @next/next/no-img-element -- explicit art is served only to signed-in confirmed adults, so not next/image */}
+      <img
+        src={art}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        onError={onError}
+        className="absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-105 motion-reduce:transition-none"
+      />
+    </button>
+  );
+}
+
+// The character's private photos. Confirmed adults see the character's nude art
+// (sent by the API only to them) and can ask for more. Everyone else sees the
+// ordinary portrait, blurred behind a lock, never the nude art.
+function PrivatePhotos({
+  person,
+  access,
+  onOpen,
+  onAsk,
+  askDisabled,
+  canPhoto,
+}: {
+  person: CharacterDTO;
+  access: PrivateAccess;
+  onOpen: () => void;
+  onAsk: () => void;
+  askDisabled: boolean;
+  canPhoto: boolean;
+}) {
+  const heading = (
+    <h3 className="flex items-center gap-2 text-sm font-bold text-[var(--ink)]">
+      <span>
+        <span className="text-[var(--accent)]">Private</span> photos
+      </span>
+      <span className="rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--accent)]">
+        18+
+      </span>
+    </h3>
+  );
+
+  if (access === "explicit") {
+    const art = person.explicitImage;
+    return (
+      <section className="mt-6" aria-label={`Private photos of ${person.name}`}>
+        {heading}
+        <div className="mt-3 grid grid-cols-2 gap-1.5">
+          {art ? <PrivateArt key={art} person={person} onOpen={onOpen} /> : null}
+          {canPhoto ? (
+            <button
+              type="button"
+              onClick={onAsk}
+              disabled={askDisabled}
+              className={cx(
+                "flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--accent)]/35 bg-[var(--accent-soft)] px-3 text-center transition-colors hover:border-[var(--accent)]/70 disabled:opacity-60",
+                art ? "aspect-[3/4]" : "col-span-2 py-6",
+              )}
+            >
+              <CameraIcon className="h-6 w-6 text-[var(--accent)]" />
+              <span className="text-sm font-semibold text-[var(--ink)]">{art ? "Ask for another" : `Ask ${person.name} for one`}</span>
+              <span className="inline-flex items-center gap-0.5 text-xs text-[var(--premium)]">
+                <CoinIcon className="h-3.5 w-3.5" />
+                {COSTS.photo}
+              </span>
+            </button>
+          ) : null}
+        </div>
+      </section>
+    );
+  }
+
+  const cta =
+    access === "verify"
+      ? { href: "/verify", label: "Confirm your age", text: `${person.name} keeps a few photos for adults only. Confirm your age to see them.` }
+      : null;
+
+  return (
+    <section className="mt-6" aria-label={`Private photos of ${person.name}, locked`}>
+      {heading}
+      <div className="relative mt-3 overflow-hidden rounded-2xl ring-1 ring-white/10" style={{ background: person.color }}>
+        {/* Only ever the ordinary portrait, blurred: the nude art never reaches this viewer. */}
+        {person.image ? (
+          <Image
+            src={person.image}
+            alt=""
+            fill
+            sizes="320px"
+            unoptimized={!isStaticArt(person.image)}
+            className="scale-125 object-cover blur-2xl"
+          />
+        ) : null}
+        <div className="relative flex flex-col items-center bg-black/55 px-4 py-6 text-center">
+          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black/50 text-white ring-1 ring-white/20">
+            <LockIcon className="h-5 w-5" />
+          </span>
+          <p className="mt-3 text-sm font-semibold text-white">For your eyes only</p>
+          <p className="mt-1 text-xs leading-5 text-white/75">
+            {cta ? cta.text : "Private photos are paused while we review this account."}
+          </p>
+          {cta ? (
+            <ButtonLink href={cta.href} size="sm" className="mt-3">
+              {cta.label}
+            </ButtonLink>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // The character's profile beside the conversation: a big portrait, what you
-// can do, the photos they've sent you, and who they are.
+// can do, their private photos, the photos they've sent you, and who they are.
 export function ProfilePanel({
   person,
   onClose,
@@ -77,6 +215,8 @@ export function ProfilePanel({
   photoBusy,
   canPhoto,
   photoReady,
+  privateAccess,
+  onOpenPrivate,
   gallery,
   onOpenPhoto,
   galleryRequest = 0,
@@ -86,10 +226,14 @@ export function ProfilePanel({
   onClose: () => void;
   closeLabel?: string;
   closeRef?: Ref<HTMLButtonElement>;
-  onPhoto: () => void;
+  // `hint`: what to ask for (one of the photo ideas); none lets them choose.
+  onPhoto: (hint?: string) => void;
   photoBusy: boolean;
   // Photos unlock after age verification.
   canPhoto: boolean;
+  privateAccess: PrivateAccess;
+  // Opens the private photo full screen.
+  onOpenPrivate: () => void;
   // The conversation has loaded, so a photo can be asked for.
   photoReady: boolean;
   gallery: Gallery;
@@ -148,7 +292,7 @@ export function ProfilePanel({
 
       <div className="mt-4 flex flex-col gap-2">
         {canPhoto ? (
-          <Button onClick={onPhoto} disabled={photoBusy || !photoReady} className="w-full">
+          <Button onClick={() => onPhoto()} disabled={photoBusy || !photoReady} className="w-full">
             <CameraIcon className="h-4 w-4" />
             {photoBusy ? "Taking a photo…" : "New photo"}
             {photoBusy ? null : (
@@ -158,12 +302,23 @@ export function ProfilePanel({
               </span>
             )}
           </Button>
+        ) : privateAccess === "held" ? (
+          <p className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2.5 text-center text-xs leading-5 text-[var(--muted)]">
+            Photos are paused while we review this account.
+          </p>
         ) : (
-          <ButtonLink href="/verify" className="w-full" title="Photos unlock after age verification">
+          <ButtonLink href="/verify" className="w-full" title="Photos open up once you confirm your age">
             <CameraIcon className="h-4 w-4" />
-            Unlock photos
+            Confirm your age
           </ButtonLink>
         )}
+        {/* The Video Studio is explicit, so it's offered with the photos. */}
+        {privateAccess === "explicit" ? (
+          <ButtonLink href={`/studio?character=${encodeURIComponent(person.id)}`} variant="secondary" className="w-full">
+            <FilmIcon className="h-4 w-4" />
+            Make a video
+          </ButtonLink>
+        ) : null}
         <div className="grid grid-cols-2 gap-2">
           <ButtonLink href={`/memories/${encodeURIComponent(person.id)}`} variant="secondary">
             <BrainIcon className="h-4 w-4" />
@@ -175,6 +330,15 @@ export function ProfilePanel({
           </Link>
         </div>
       </div>
+
+      <PrivatePhotos
+        person={person}
+        access={privateAccess}
+        onOpen={onOpenPrivate}
+        onAsk={() => onPhoto(NUDE_IDEA.hint)}
+        askDisabled={photoBusy || !photoReady}
+        canPhoto={canPhoto}
+      />
 
       <section ref={galleryRef} className="mt-6 scroll-mt-4" aria-label={`Photos from ${person.name}`}>
         <div className="flex items-baseline justify-between gap-3">
@@ -214,10 +378,14 @@ export function ProfilePanel({
             </span>
             <p className="mt-2 text-sm font-semibold text-[var(--ink)]">No photos yet</p>
             <p className="mt-0.5 text-xs leading-5 text-[var(--muted)]">
-              {canPhoto ? `Ask ${person.name} for one. Every photo is made just for you.` : "Photos unlock after age verification."}
+              {canPhoto
+                ? `Ask ${person.name} for one. Every photo is made just for you.`
+                : privateAccess === "held"
+                  ? "Photos are paused while we review this account."
+                  : "Photos open up once you confirm your age."}
             </p>
             {canPhoto ? (
-              <Button variant="secondary" className="mt-3" onClick={onPhoto} disabled={photoBusy || !photoReady}>
+              <Button variant="secondary" className="mt-3" onClick={() => onPhoto()} disabled={photoBusy || !photoReady}>
                 <CameraIcon className="h-4 w-4" />
                 New photo
               </Button>
