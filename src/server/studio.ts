@@ -753,6 +753,34 @@ export function soloMotionPrompt(motion: string | null | undefined) {
   return text ? `${text}, ${SOLO_ANCHOR}` : undefined;
 }
 
+// Fluids, which image-to-video models can't render: asked for in a clip's
+// motion they smear or morph. The keyframe can show them; the clip then only
+// moves what's there. A quality rule, not a safety one, so the animate route
+// refuses them before charging and logs nothing.
+const CLIP_FLUIDS = new RegExp(
+  [
+    String.raw`cum[\s-]*shots?`,
+    String.raw`cum(?=[\s-]+(?:on|over|in|into|all|drip\w*|runs?|running|covered|load)\b)`,
+    String.raw`covered in cum`,
+    String.raw`creampies?`,
+    String.raw`squirt\w*`,
+    String.raw`semen|sperm|jizz\w*|ejaculat\w*`,
+    String.raw`drool\w*|saliva|spit(?:s|ting)?`,
+    String.raw`lube[ds]?|lubricant`,
+    String.raw`drip(?:s|ped|ping|py)?|splash\w*|trickl\w*|gush\w*|leak\w*`,
+    String.raw`lactat\w*|breast milk`,
+    String.raw`pee(?:s|ing)?|piss\w*|urin\w*`,
+  ]
+    .map((part) => `\\b(?:${part})\\b`)
+    .join("|"),
+  "i",
+);
+
+// The fluid a written motion asks for, or null.
+export function clipFluids(motion: string) {
+  return CLIP_FLUIDS.exec(motion.replace(/\s+/g, " "))?.[0] ?? null;
+}
+
 // What the keyframe shows: the setting, the outfit for who the character is,
 // the pose the motion starts from, and the user's details, with "alone" said
 // plainly so the scene has exactly one person in it.

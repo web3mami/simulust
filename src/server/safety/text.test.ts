@@ -912,7 +912,7 @@ describe("checkImagePrompt", () => {
       "on a rooftop terrace at golden hour, linen sundress, leaning on the railing, shot from a low angle",
       "an old-school pinup look in a red dress",
       "she winks and smiles",
-      "subtle natural movement: slow breathing, a soft smile, hair moving gently, a slight turn of the head, alone, the only person in the scene. The same adult from the photo, same face and body, natural realistic motion, steady camera, consistent lighting.",
+      "subtle natural movement: slow breathing, hair drifting gently, a soft smile, a slight turn of the head, the camera pushing in slowly, alone, the only person in the scene. The same adult from the photo, same face and body, moving only what is already in the photo, natural realistic motion, smooth slow camera, consistent lighting.",
       "at the beach under a gentle sunset",
     ];
     for (const scene of scenes) expect(checkImagePrompt(scene), scene).toEqual({ ok: true });

@@ -372,6 +372,33 @@ describe("who can animate what", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("refuses fluids in a motion before charging, and logs nothing", async () => {
+    const worker = vi.fn(async () => Response.json({ error: "unexpected" }, { status: 500 }));
+    vi.stubEnv("VIDEO_API_URL", "http://worker.test");
+    vi.stubGlobal("fetch", worker);
+    try {
+      const mod = await load("mock");
+      const { eq } = await import("drizzle-orm");
+      const { user, photo } = await setup(mod, "animate-fluids");
+      // Cum on her is someone else's, so the one-person check takes it first.
+      for (const prompt of ["she squirts as she arches her back", "drooling on the pillow", "water dripping from her hair"]) {
+        const response = await mod.animate(
+          as("animate-fluids", "http://localhost/x", { method: "POST", body: JSON.stringify({ prompt }) }),
+          params(photo.id),
+        );
+        expect(response.status, prompt).toBe(422);
+        expect(((await response.json()) as { code: string }).code, prompt).toBe("video_fluids");
+      }
+      expect(worker).not.toHaveBeenCalled();
+      expect(await mod.balanceOf(user.id)).toBe(100);
+      const database = await mod.db();
+      expect(await database.select().from(mod.schema.media).where(eq(mod.schema.media.sourceMediaId, photo.id))).toEqual([]);
+      expect(await database.select().from(mod.schema.moderationEvents).where(eq(mod.schema.moderationEvents.userId, user.id))).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("one person in every clip", () => {
@@ -409,7 +436,7 @@ describe("one person in every clip", () => {
 
       // The default motion ends in the same anchor, said once, with the same negatives.
       expect((await post({})).status).toBe(202);
-      expect(sent[1].prompt).toContain("a slight turn of the head, alone, the only person in the scene.");
+      expect(sent[1].prompt).toContain("the camera pushing in slowly, alone, the only person in the scene.");
       expect(sent[1].prompt.split("the only person").length).toBe(2);
       expect(sent[1].negative_prompt).toContain("multiple people");
     } finally {

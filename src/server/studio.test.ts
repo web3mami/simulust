@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bringsOthers, SOLO_ANCHOR, soloMotionPrompt, studioBringsOthers, studioScene } from "@/server/studio";
+import { bringsOthers, clipFluids, SOLO_ANCHOR, soloMotionPrompt, studioBringsOthers, studioScene } from "@/server/studio";
 import { checkImagePrompt } from "@/server/safety/text";
 import { EXPLICIT_PHOTO_IDEAS, EXPLICIT_PHOTO_IDEAS_MAN, PHOTO_IDEAS } from "@/components/chat/format";
 import { STUDIO_ACTIONS, STUDIO_OUTFITS, STUDIO_SETTINGS, studioMotion } from "@/lib/studio";
@@ -1278,5 +1278,41 @@ describe("studioBringsOthers", () => {
       const presets = [...STUDIO_SETTINGS, ...STUDIO_OUTFITS, ...STUDIO_ACTIONS].flatMap((option) => [option.label, option.blurb]);
       allowed([...scenes, ...motions, ...presets], studioAs(gender));
     }
+  });
+});
+
+describe("clipFluids", () => {
+  it("finds the fluids a clip can't render", () => {
+    for (const motion of [
+      "cum dripping down her chest",
+      "a slow cumshot",
+      "covered in cum",
+      "she squirts",
+      "squirting on the sheets",
+      "a creampie",
+      "drooling on the pillow",
+      "spitting on her fingers",
+      "lube glistening on her thighs",
+      "water dripping from her hair",
+      "milk splashing over her",
+      "peeing in the shower",
+    ]) {
+      expect(clipFluids(motion), motion).not.toBeNull();
+    }
+  });
+
+  it("lets motion of what the photo shows through, and every studio motion", () => {
+    for (const motion of [
+      "she arches her back and moans as she cums",
+      "cumming hard, toes curling",
+      "wet hair slicked back, steam drifting",
+      "peeks over the shoulder",
+      "lips glistening, a soft smile",
+      "a cumulus cloud drifts past the window",
+      "slow breathing, the camera pushing in slowly",
+    ]) {
+      expect(clipFluids(motion), motion).toBeNull();
+    }
+    for (const action of STUDIO_ACTIONS) expect(clipFluids(studioMotion(action.id)), action.id).toBeNull();
   });
 });

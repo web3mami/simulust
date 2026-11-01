@@ -12,7 +12,7 @@ import { failMedia, getMedia, isExplicitMedia, toMediaDTO } from "@/server/media
 import { rateLimit } from "@/server/ratelimit";
 import { logModeration, moderateText, refusal, saidText } from "@/server/safety/moderation";
 import { checkImagePrompt, declaresMinorAge, IMAGE_REFUSAL, REFUSAL } from "@/server/safety/text";
-import { OTHER_PEOPLE_NEGATIVE, soloMotionPrompt, studioBringsOthers } from "@/server/studio";
+import { clipFluids, OTHER_PEOPLE_NEGATIVE, soloMotionPrompt, studioBringsOthers } from "@/server/studio";
 import { blockVideo, startVideoJob, VideoBlocked, videoMode, videoPrompt } from "@/server/video";
 import { COSTS } from "@/lib/pricing";
 
@@ -113,6 +113,15 @@ export const POST = route(async (request: NextRequest, ctx: RouteContext<"/api/m
     // hands on her hips" is them joining the clip.
     const others = studioBringsOthers(prompt, character?.gender);
     if (others) throw await othersLogged(others);
+    // Last, as it's no safety matter: a fluid the model can't render would
+    // come out smeared, so it's refused before the clip is paid for.
+    if (clipFluids(prompt)) {
+      throw new HttpError(
+        422,
+        "Clips can't show fluids, so leave them out of the motion. A photo can show them, and its clip moves what's in it. Nothing was charged.",
+        "video_fluids",
+      );
+    }
   }
 
   // A written motion ends in the one-person anchor, as the default motion

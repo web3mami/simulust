@@ -42,6 +42,14 @@ export type ActionOption = StudioOption & {
   motion: string;
 };
 
+// Image-to-video models animate what the keyframe shows and morph whatever a
+// motion asks for that isn't there: a body that appears, a second person,
+// clothes that change. So each pose puts everything the clip shows in the
+// keyframe (the undress starts undressed), and each motion is small movement
+// of it: breathing, hair, a slow hip shift, a step at most, the camera pushing
+// in. No fluids either, which the models can't render (CLIP_FLUIDS in
+// src/server/studio.ts refuses them in a written motion).
+
 export const STUDIO_SETTINGS = [
   {
     id: "bedroom",
@@ -187,36 +195,36 @@ export const STUDIO_ACTIONS = [
     label: "Tease the camera",
     blurb: "A slow lean in, eyes on you",
     pose: "leaning toward the camera with a slow knowing smile, one hand in the hair",
-    motion: "slowly leans toward the camera with a teasing smile, one hand gliding through the hair, holding eye contact",
+    motion: "leans in a little closer with a teasing smile, fingers drifting through the hair, slow breathing, holding eye contact as the camera pushes in slowly",
   },
   {
     id: "undress",
     label: "Slow undress",
-    blurb: "Straps slip, fabric falls",
+    blurb: "Straps down, slipping lower",
     nudity: true,
-    pose: "fingers hooked under a shoulder strap, about to slip it off, inviting gaze",
-    motion: "slowly slides the straps off the shoulders and lets the clothing fall away, unhurried and sensual, steady eye contact",
+    pose: "top slipped down to the waist, bare chest, fingers hooked in the fallen strap, inviting gaze",
+    motion: "slowly draws the loose strap further down the arm, chest rising and falling with deep breaths, a slight shift of the hips, steady eye contact",
   },
   {
     id: "stretch",
     label: "Stretch in bed",
     blurb: "Languid, arched, lazy morning",
     pose: "lying back, arms stretched above the head, relaxed and content",
-    motion: "stretches languidly, arching the back with arms reaching overhead, then settles back with a contented smile",
+    motion: "arches the back in a slow lazy stretch, arms reaching a little further overhead, then relaxes with a contented smile",
   },
   {
     id: "water",
     label: "Under the water",
     blurb: "Water streaming down",
     pose: "eyes closed, face tilted up into falling water, wet hair slicked back",
-    motion: "warm water streams over the shoulders and down the body, hands slowly smoothing wet hair back, steam drifting",
+    motion: "hands slowly smoothing the wet hair back, chest rising with slow breaths, steam drifting, a soft smile",
   },
   {
     id: "dance",
     label: "Slow dance",
-    blurb: "Hips sway to the music",
+    blurb: "A slow, loose sway of the hips",
     pose: "mid-sway, hips turned, arms raised loosely",
-    motion: "sways the hips slowly to the music, turning gently, arms flowing, a playful glance over the shoulder",
+    motion: "sways the hips slowly side to side, arms drifting loosely overhead, hair swinging softly, a playful glance over the shoulder",
   },
   {
     id: "kiss",
@@ -227,17 +235,17 @@ export const STUDIO_ACTIONS = [
   },
   {
     id: "walk",
-    label: "Walk toward you",
-    blurb: "Confident, unhurried steps",
+    label: "Step closer",
+    blurb: "One slow, confident step",
     pose: "standing mid-step toward the camera, confident posture",
-    motion: "walks slowly toward the camera with a confident sway, holding eye contact the whole way",
+    motion: "takes one slow step closer with a confident sway of the hips, holding eye contact as the camera pushes in slowly",
   },
   {
     id: "glance",
     label: "Over the shoulder",
     blurb: "A look back, a slow smile",
     pose: "back to the camera, looking back over the shoulder with a sultry smile",
-    motion: "turns slowly to look back over the shoulder, a slow smile spreading, hair falling across the back",
+    motion: "glances a little further back over the shoulder, a slow smile spreading, hair sliding across the back",
   },
   {
     id: "caress",
