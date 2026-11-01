@@ -74,7 +74,7 @@ afterAll(async () => {
 describe("videoPrompt", () => {
   it("ends the default motion in the one-person anchor, once, and the worker screen lets it through", () => {
     const { prompt } = videoPrompt();
-    expect(prompt).toContain(`a slight turn of the head, ${SOLO_ANCHOR}. The same adult from the photo`);
+    expect(prompt).toContain(`the camera pushing in slowly, ${SOLO_ANCHOR}. The same adult from the photo`);
     expect(prompt.split(SOLO_ANCHOR).length).toBe(2);
     expect(videoPrompt("   ").prompt).toBe(prompt);
     expect(checkImagePrompt(prompt)).toEqual({ ok: true });
@@ -82,7 +82,7 @@ describe("videoPrompt", () => {
 
   it("anchors a written motion the way the animate route does, also once", () => {
     expect(videoPrompt(soloMotionPrompt("she turns toward the window, alone")).prompt).toBe(
-      `she turns toward the window, ${SOLO_ANCHOR}. The same adult from the photo, same face and body, natural realistic motion, steady camera, consistent lighting.`,
+      `she turns toward the window, ${SOLO_ANCHOR}. The same adult from the photo, same face and body, moving only what is already in the photo, natural realistic motion, smooth slow camera, consistent lighting.`,
     );
   });
 });

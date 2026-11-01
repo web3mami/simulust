@@ -266,6 +266,55 @@ only allowed through for a user who may see it: a confirmed adult with no
 explicit hold when the clip finishes) before anything is stored. A refused clip
 is refunded.
 
+## Writing motions
+
+Image-to-video models animate what the source frame shows and morph whatever
+the prompt adds that isn't there. That's what makes clips go wrong: a body
+that appears, clothes that change, a face that drifts. So:
+
+- **Everything explicit goes in the keyframe.** The Studio's "Slow undress"
+  starts with the top already down; its clip only draws the strap lower. A
+  model won't invent nudity between frames well.
+- **Motions are small movement of what's there:** breathing, hair drifting, a
+  slow hip shift, one step at most, the camera pushing in. The Studio presets
+  (`STUDIO_ACTIONS` in `src/lib/studio.ts`) and the default motion in
+  `src/server/video.ts` follow this.
+- **No fluids.** The models can't render them, so the animate route refuses a
+  motion that asks for them before charging (`clipFluids` in
+  `src/server/studio.ts`, error `video_fluids`). A keyframe can show them.
+- **Music stays generic, no brand, song or artist names.** Clips are silent
+  today; models that make audio (Seedance, Wan 3.0) refuse prompts that trip
+  their IP checks.
+
+## Hosted video models
+
+Not wired in: this worker's Wan 2.2 TI2V-5B is the only video model the app
+uses. These notes are for adding a hosted provider. Model ids are as that
+provider lists them; many cinematic models are SFW-only and quietly dress the
+subject back up.
+
+| Use | Model | Notes |
+| --- | --- | --- |
+| Image-to-video, explicit | `wan-2-7-enhanced-image-to-video` | First choice. The one trained on adult content. Put every explicit element in the source frame and leave fluids out of the prompt. |
+| Image-to-video, long or big camera moves | `wan-3-0-image-to-video` | Uncensored, 1080p, up to 30 s, start and end frames. Less tuned for close-up anatomy than 2.7. |
+| Text-to-video, explicit | `seedance-2-0-enhanced-text-to-video` | Best adult-content comprehension from text alone. |
+| Text-to-video, length | `wan-3-0-text-to-video` | Close second, up to 30 s at 1080p. |
+
+Avoid `grok-imagine` (any variant: R-rated ceiling, refuses visible
+genitalia), `seedance-2-5` (won't introduce nudity from text, only works from
+an already-explicit image) and `minimax` (does nudity, but anatomy and genitals
+are unreliable).
+
+The workflow that gets results is the Studio's: make the keyframe on Chroma
+(`REALISTIC_MODEL=chroma`) until the pose and anatomy are right, then animate
+it with `wan-2-7-enhanced-image-to-video` and a micro-motion prompt.
+
+Whatever hosts the model, the safety order stays the same: the app's text
+screens before submitting, this worker's tagger on the source and the sampled
+frames (minor and second-person checks), and Hive on the frames before a clip
+is stored. Text-to-video would skip the moderated keyframe every clip starts
+from today, so it needs those output checks to carry it alone.
+
 ## Safety on the worker
 
 The app is the main safety layer: it screens prompts, adds adult anchors and

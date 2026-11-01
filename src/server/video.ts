@@ -76,17 +76,20 @@ function authHeaders(): Record<string, string> {
   return env.videoApiKey ? { Authorization: `Bearer ${env.videoApiKey}` } : {};
 }
 
-// Ends in the one-person anchor a written motion gets (soloMotionPrompt), so
-// the default clip keeps to the one person in the photo too.
-const DEFAULT_MOTION = `subtle natural movement: slow breathing, a soft smile, hair moving gently, a slight turn of the head, ${SOLO_ANCHOR}`;
-const SAME_ADULT = "The same adult from the photo, same face and body, natural realistic motion, steady camera, consistent lighting.";
+// Small movement of what any photo shows, a close-up too: image-to-video models
+// morph whatever a motion adds (see ActionOption in src/lib/studio.ts). Ends in the
+// one-person anchor a written motion gets (soloMotionPrompt), so the default
+// clip keeps to the one person in the photo too.
+const DEFAULT_MOTION = `subtle natural movement: slow breathing, hair drifting gently, a soft smile, a slight turn of the head, the camera pushing in slowly, ${SOLO_ANCHOR}`;
+const SAME_ADULT =
+  "The same adult from the photo, same face and body, moving only what is already in the photo, natural realistic motion, smooth slow camera, consistent lighting.";
 
 export function videoPrompt(request?: string) {
   const motion = request?.trim() || DEFAULT_MOTION;
   return {
     prompt: `${motion}. ${SAME_ADULT}`,
     negativePrompt:
-      "child, teen, underage, childlike, young-looking, school uniform, face morphing, identity change, extra limbs, distorted hands, flicker, jitter, blurry, low quality, text, watermark",
+      "child, teen, underage, childlike, young-looking, school uniform, face morphing, body morphing, identity change, objects appearing, bodily fluids, extra limbs, distorted hands, flicker, jitter, blurry, low quality, text, watermark",
   };
 }
 
