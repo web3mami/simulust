@@ -1,38 +1,37 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { currentUser, isAgeVerified, requireUser } from "@/server/auth";
+import { currentUser, requireUser } from "@/server/auth";
 import { db } from "@/server/db";
 import { users } from "@/server/db/schema";
 import { HttpError, readJson, route } from "@/server/http";
 import { publicFeatures, toMe } from "@/server/me";
 import { rateLimit } from "@/server/ratelimit";
 import { moderateText, refusal } from "@/server/safety/moderation";
+import { syncHeldCookie } from "@/server/sessions";
 import { asName } from "@/server/safety/text";
 import type { MeResponse } from "@/lib/api-types";
 
+// The app asks this on every load, so it's where a held account's browser is
+// marked (and unmarked once a review lifts the hold): see syncHeldCookie.
 export const GET = route(async (request: Request) => {
   const user = await currentUser(request);
   const body: MeResponse = { me: user ? await toMe(user) : null, features: publicFeatures() };
-  return Response.json(body);
+  return syncHeldCookie(request, Response.json(body), user);
 });
 
-const patch = z.object({
+// Unknown fields are refused rather than ignored: there's no explicit switch
+// (every confirmed adult gets explicit content), and a client still sending
+// one should find out.
+const patch = z.strictObject({
   displayName: z.string().trim().min(1).max(40).optional(),
+  // A Solana address (base58, 32 to 44 characters), or null to forget it.
   walletAddress: z.string().trim().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/).nullable().optional(),
-  settings: z
-    .object({
-      explicit: z.boolean().optional(),
-      unpromptedMedia: z.boolean().optional(),
-    })
-    .optional(),
+  settings: z.strictObject({ unpromptedMedia: z.boolean().optional() }).optional(),
 });
 
 export const PATCH = route(async (request: Request) => {
   const user = await requireUser(request);
   const input = await readJson(request, patch);
-  if (input.settings?.explicit && !isAgeVerified(user)) {
-    throw new HttpError(403, "Verify your age to turn on explicit content.", "age_verification_required");
-  }
   // Screened like the profile name: the app shows it, and it's user-written
   // text an attacker could aim at a prompt.
   if (input.displayName && input.displayName !== user.displayName) {
@@ -48,17 +47,7 @@ export const PATCH = route(async (request: Request) => {
     .set({
       ...(input.displayName ? { displayName: input.displayName } : {}),
       ...(input.walletAddress !== undefined ? { walletAddress: input.walletAddress } : {}),
-      ...(input.settings
-        ? {
-            settings: {
-              ...user.settings,
-              ...input.settings,
-              ...(input.settings.explicit && !user.settings.explicitConsentAt
-                ? { explicitConsentAt: new Date().toISOString() }
-                : {}),
-            },
-          }
-        : {}),
+      ...(input.settings ? { settings: { ...user.settings, ...input.settings } } : {}),
     })
     .where(eq(users.id, user.id))
     .returning();

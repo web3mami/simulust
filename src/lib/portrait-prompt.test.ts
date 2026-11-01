@@ -4,6 +4,7 @@ import { SEED_CHARACTERS } from "@/lib/characters";
 import {
   appearanceText,
   buildImagePrompt,
+  OTHER_PEOPLE_NEGATIVE,
   portraitPrompt,
   portraitRequest,
   type ImageSubject,
@@ -223,6 +224,35 @@ describe("buildImagePrompt", () => {
   it("never puts the character's name into the prompt", () => {
     const { prompt } = buildImagePrompt({ subject: { ...subject, name: "Yuki" }, scene: "at a cafe", explicit: true });
     expect(prompt).not.toMatch(/yuki/i);
+  });
+});
+
+// Every image shows one person: chat photos, studio frames, nude portraits and
+// creator portraits all carry the other-people negatives, in words the worker
+// accepts (never naming an adult or an age).
+describe("other people in the negative prompt", () => {
+  const subject: ImageSubject = { name: "Mira", age: 27, gender: "Woman", style: "realistic" };
+  const negatives = [
+    ...[false, true].flatMap((explicit) =>
+      (["realistic", "anime"] as const).flatMap((style) =>
+        ["Woman", "Man", "Non-binary"].map((gender) => buildImagePrompt({ subject: { ...subject, style, gender }, scene: "in bed", explicit }).negativePrompt),
+      ),
+    ),
+    portraitPrompt(request({})).negativePrompt,
+    portraitPrompt(request({ style: "anime" }), { suggestive: true }).negativePrompt,
+    portraitPrompt(portraitRequest(guy)!).negativePrompt,
+  ];
+
+  it("are in every image prompt", () => {
+    for (const negativePrompt of negatives) {
+      for (const term of OTHER_PEOPLE_NEGATIVE) expect(negativePrompt, term).toContain(term);
+    }
+  });
+
+  it("never name an adult", () => {
+    for (const term of OTHER_PEOPLE_NEGATIVE) {
+      expect(term).not.toMatch(/\b(?:woman|women|man|men|adult|mature|lady|ladies|mother|wife|older)\b|\d+\s*-?\s*(?:yo|years?)/);
+    }
   });
 });
 

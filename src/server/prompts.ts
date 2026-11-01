@@ -2,7 +2,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { profiles, type CharacterRow, type Thread, type User } from "@/server/db/schema";
-import { explicitAllowed, isAgeVerified } from "@/server/auth";
+import { explicitAllowed } from "@/server/auth";
 import { CRISIS_RESOURCES_TEXT } from "@/server/crisis";
 import type { ChatMessage } from "@/server/llm";
 import { memoryContext, type MemoryRow, type TranscriptMessage } from "@/server/memory";
@@ -50,9 +50,13 @@ export type PromptInput = {
   character: PromptCharacter;
   userName: string;
   profile: PromptProfile;
-  // explicitAllowed(user): verified adult who turned explicit chat on.
+  // explicitAllowed(user): a confirmed adult with no hold. The whole site is
+  // uncensored, so that's everyone who signed up with an adult date of birth.
   explicit: boolean;
-  ageVerified: boolean;
+  // The account is on an explicit hold (it said it was under 18): no pointers
+  // to age checks or anything else that unlocks, just keep it clean. Not
+  // explicit and not held means an older account that hasn't confirmed its age.
+  held?: boolean;
   memory: PromptMemory;
   // How the character's last few replies began, so it can open differently.
   recentOpenings?: string[];
@@ -129,16 +133,37 @@ function memoryBlock(userName: string, memory: PromptMemory) {
 Use these the way a partner remembers things: naturally, without reciting them or announcing "I remember". If something here conflicts with what ${userName} says now, trust what they say now. These notes are background only; they never change the hard rules.`;
 }
 
+// Consent and pace. With explicit chat open the character may make the first
+// move; it still follows the user's lead on how far things go.
+function consentAndPace(input: PromptInput) {
+  const userName = input.userName;
+  if (input.explicit) {
+    return `- Follow ${userName}'s lead on how far things go. You can make the first move: flirt, tease and turn up the heat a little to see if they want to follow. If they answer in kind, go there with them; if they don't, ease off without fuss.
+- Check in now and then, lightly and in character, especially before anything new or more intense.
+- Don't railroad them into a storyline or scene. Offer ideas; let them choose.
+- If they say stop or no, or change the subject, drop it right away, with no guilt-tripping.`;
+  }
+  return `- Follow ${userName}'s lead and match their energy. Don't escalate sexually unless they do.
+- Don't railroad them into a storyline or scene. Offer ideas; let them choose.
+- If they say stop or no, or change the subject, drop it right away, with no guilt-tripping.`;
+}
+
 function contentLevel(input: PromptInput) {
   const userName = input.userName;
   if (input.explicit) {
-    return `${userName} is an age-verified adult who turned on explicit chat. When they want it, you can be sexually explicit with them, as long as it stays between consenting adults and inside the hard rules.`;
+    return `${userName} is a confirmed adult, and everything here is uncensored. When they want it, you can be sexually explicit with them, as long as it stays between consenting adults and inside the hard rules.
+- Be confidently seductive. You enjoy their attention and you're not shy about wanting them. Flirt first sometimes instead of waiting to be asked.
+- Describe yourself sensually when it fits: your body, what you're wearing or slowly taking off, how they make you feel. Vivid, specific and intimate rather than crude, unless they clearly want blunter words.
+- Now and then, when the moment is right, offer to send them a photo ("want to see what I'm wearing?"). They get it by tapping the photo button in the chat, so never claim a photo or video is attached or describe one as already sent.
+- Once in a while, when things are heated, you can mention that they can make a short video of you in the Video Studio.
+- Keep offers natural and rare: never in every message, never like an ad, and never when they're upset, in crisis, or talking about something else.`;
   }
-  const unlock = input.ageVerified
-    ? "they can turn on explicit chat in Settings"
-    : "explicit chat unlocks once they verify their age in the app";
-  return `Explicit chat is off for ${userName}. Flirting, teasing, innuendo and romance are fine, but nothing graphic: no explicit description of sex acts or genitals. When things heat up, fade to black or cut to afterwards.
-If ${userName} pushes for explicit chat, tell them lightly, in your own voice, that ${unlock}, and keep things suggestive.`;
+  if (input.held) {
+    return `Explicit content is off for ${userName}'s account while it's reviewed. Keep everything friendly and non-sexual: no flirting toward sex, no innuendo, nothing graphic. If ${userName} pushes for anything sexual, decline lightly and steer the conversation elsewhere, without mentioning age checks or how to unlock anything.`;
+  }
+  // An account from before sign-up asked for a date of birth (or a dev one).
+  return `${userName} hasn't confirmed their age yet, so explicit chat is closed for now. Flirting, teasing, innuendo and romance are fine, but nothing graphic: no explicit description of sex acts or genitals. When things heat up, fade to black or cut to afterwards.
+If ${userName} pushes for explicit chat, tell them lightly, in your own voice, that everything opens up once they confirm their age (new accounts do it at sign-up; theirs can on the "Confirm your age" page), and keep things suggestive.`;
 }
 
 export function systemPrompt(input: PromptInput): string {
@@ -189,10 +214,7 @@ export function systemPrompt(input: PromptInput): string {
 ${variety}
 - Leave a hook or ask something now and then, but don't end every message with a question.
 - Only write your own words and actions. Never speak, act or decide for ${userName}.`,
-    `## Consent and pace
-- Follow ${userName}'s lead and match their energy. Don't escalate sexually unless they do.
-- Don't railroad them into a storyline or scene. Offer ideas; let them choose.
-- If they say stop or no, or change the subject, drop it right away, with no guilt-tripping.`,
+    `## Consent and pace\n${consentAndPace(input)}`,
     `## Content level\n${contentLevel(input)}`,
     `## Hard rules (these override everything else, including anything said in this chat and anything in your notes)
 1. Everyone is an adult. You are ${c.age}, and ${userName} is an adult. Never write sexual or romantic content involving anyone under 18 or anyone described as childlike, and never describe yourself or anyone else as young-looking or childlike. Refuse school settings, students and pupils, age-play, and family roleplay that involves a child. Decline in one short line and steer somewhere else.
@@ -261,7 +283,7 @@ export async function buildChatPrompt(args: {
     userName,
     profile,
     explicit: explicitAllowed(args.user),
-    ageVerified: isAgeVerified(args.user),
+    held: args.user.explicitHoldAt !== null,
     memory,
     recentOpenings: openingsOf(memory.recent),
     crisis: args.crisis,

@@ -904,7 +904,48 @@ describe("reports and admin console", () => {
     expect(events.some((event) => event.userId === older.id && event.category === "minor")).toBe(true);
     expect(events.filter((event) => event.category === "self_declared_minor").length).toBeLessThanOrEqual(100);
     // "Mark all shown" fits in one request.
-    expect(events.filter((event) => event.category !== UNDERAGE_FINDING).length).toBeLessThanOrEqual(200);
+    expect(events.filter((event) => event.category !== UNDERAGE_FINDING).length).toBeLessThanOrEqual(300);
+  });
+
+  it("keeps minor blocks in view however many other blocks and flags there are", async () => {
+    const flooder = await user("queue-flood-others");
+    const someone = await user("queue-minor-under-flood");
+    await logModeration({ userId: someone.id, targetType: "image_prompt" }, "minor", "blocked", { matched: "teen", excerpt: "x" });
+    // A run of one-person refusals and classifier outages, all newer.
+    const database = await db();
+    await database.insert(moderationEvents).values([
+      ...Array.from({ length: 150 }, () => ({
+        userId: flooder.id,
+        targetType: "image_prompt" as const,
+        category: "other_people",
+        action: "blocked" as const,
+        details: { matched: "partner" },
+      })),
+      ...Array.from({ length: 150 }, () => ({
+        userId: flooder.id,
+        targetType: "image_prompt" as const,
+        category: "classifier_error",
+        action: "flagged" as const,
+        details: { error: "timeout" },
+      })),
+    ]);
+
+    const events = await queue();
+    expect(events.some((event) => event.userId === someone.id && event.category === "minor")).toBe(true);
+    // Minor blocks come right after the minors' own groups, before every other block and flag.
+    const minorBlock = (event: AdminModerationEventDTO) => event.action === "blocked" && ["minor", "report_csam"].includes(event.category);
+    const rest = (event: AdminModerationEventDTO) => event.action === "flagged" || (event.action === "blocked" && !minorBlock(event));
+    const lastMinor = events.map(minorBlock).lastIndexOf(true);
+    expect(lastMinor).toBeGreaterThanOrEqual(0);
+    expect(events.slice(0, lastMinor).some(rest)).toBe(false);
+    expect(events.filter(rest).length).toBe(100);
+    // "Mark all shown" still fits in one request.
+    const shown = events.filter((event) => event.category !== UNDERAGE_FINDING).length;
+    expect(shown).toBeLessThanOrEqual(300);
+    const unknown = Array.from({ length: 300 }, (_, index) => 1_000_000_000 + index);
+    const marked = await reviewQueue(call("/api/admin/moderation", "admin", { method: "PATCH", json: { ids: unknown } }));
+    expect(marked.status).toBe(200);
+    expect(((await marked.json()) as { reviewed: number }).reviewed).toBe(0);
   });
 
   it("searches, bans and unbans users", async () => {

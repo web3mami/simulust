@@ -23,6 +23,7 @@ import {
   CoinIcon,
   CompassIcon,
   FemaleIcon,
+  FilmIcon,
   FlagIcon,
   GalleryIcon,
   HeartIcon,
@@ -113,6 +114,7 @@ const NAV: NavItem[] = [
   { href: "/", label: "Home", icon: <HomeIcon />, match: (p) => p === "/" },
   { href: "/discover", label: "Discover", icon: <CompassIcon />, match: (p) => p.startsWith("/discover") },
   { href: "/chat", label: "Chat", icon: <ChatIcon />, match: (p) => p.startsWith("/chat") || p.startsWith("/date") },
+  { href: "/studio", label: "Video Studio", icon: <FilmIcon />, match: (p) => p.startsWith("/studio") },
   { href: "/collection", label: "Collection", icon: <GalleryIcon />, match: (p) => p.startsWith("/collection") },
   { href: "/create", label: "Create Character", icon: <PlusCircleIcon />, match: (p) => p.startsWith("/create") },
   {

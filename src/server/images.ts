@@ -42,7 +42,7 @@ export class ImageGenerationError extends Error {
     message: string,
     // The worker refused on safety grounds: treat like a moderation block.
     public blocked = false,
-    // The worker's reason for a block, e.g. "minor:teen".
+    // The worker's reason for a block, e.g. "minor:teen" or "people:2girls:0.80".
     public reason: string | null = null,
   ) {
     super(message);
@@ -72,12 +72,15 @@ function parseJson(text: string): unknown {
 
 // The moderation category for a worker refusal. Its reasons start with what
 // was found: "minor:teen" (a rule the worker shares with checkText), "apparent
-// minor: loli:0.91" (its anime tagger), "real_person:deepfake". "term:kid" is
-// one of its image-only words ("a minor tilt of the head"), which says nothing
-// about anyone, so it stays a plain worker refusal.
+// minor: loli:0.91" (its anime tagger), "real_person:deepfake". "people:2girls:0.80"
+// is the same tagger seeing a second person: the one-person rule, not a
+// violation, so it is filed as one_person and never as minor content. "term:kid"
+// is one of its image-only words ("a minor tilt of the head"), which says
+// nothing about anyone, so it stays a plain worker refusal.
 export function workerRefusalCategory(reason: string) {
   if (/^(?:minor:|apparent minor\b)/i.test(reason)) return "minor";
   if (/^real_person\b/i.test(reason)) return "real_person";
+  if (/^people\b/i.test(reason)) return "one_person";
   return "worker_refused";
 }
 

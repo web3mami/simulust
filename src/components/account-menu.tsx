@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useDeviceRefused } from "@/components/age-gate";
 import { useSession } from "@/components/auth-gate";
 import {
   AdminIcon,
@@ -16,13 +17,15 @@ import {
 import { preloadLoginArt } from "@/components/login-screen";
 import { PremiumIcon } from "@/components/premium-icon";
 import { cx } from "@/components/ui";
-import type { AgeStatus } from "@/lib/api-types";
+import { useWalletStatus, walletStatusOf } from "@/components/wallet-sync";
+import { ageLine, shortAddress, walletOf, type AgeLine } from "@/lib/session";
 
-const AGE_LABEL: Record<AgeStatus, string> = {
-  approved: "Age verified",
-  pending: "Verification in progress",
-  declined: "Verification not approved",
-  none: "Age not verified",
+// The dot beside the age line.
+export const AGE_DOT: Record<AgeLine["tone"], string> = {
+  ok: "bg-emerald-400",
+  hold: "bg-sky-300",
+  pending: "animate-pulse bg-sky-300 motion-reduce:animate-none",
+  todo: "bg-[var(--accent)]",
 };
 
 // The filled avatar used for the signed-in person everywhere (top bar, menu,
@@ -86,7 +89,10 @@ const SIGNED_OUT_BUTTON =
 
 export function AccountMenu({ lane }: { lane?: string }) {
   const { ready, session, me, signOut, openLogin, openSignup } = useSession();
+  const wallet = useWalletStatus();
+  const refused = useDeviceRefused();
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const { trigger, panel } = useMenu(open, setOpen);
 
   // Until the login provider knows who this is, hold the avatar's place:
@@ -94,6 +100,10 @@ export function AccountMenu({ lane }: { lane?: string }) {
   if (!ready) {
     return <span aria-hidden className="block h-10 w-10 animate-pulse rounded-full bg-[var(--surface-2)] motion-reduce:animate-none" />;
   }
+
+  // A device the age check turned away is offered no way to sign up or log in
+  // (the open pages it can still read show the top bar).
+  if (!session && refused) return null;
 
   if (!session) {
     // Fetch the sign-up art as soon as someone shows intent, so the modal opens complete.
@@ -129,10 +139,23 @@ export function AccountMenu({ lane }: { lane?: string }) {
     );
   }
 
-  const label = me?.displayName && me.displayName !== "You" ? me.displayName : session.display;
+  const label = session.display;
   // The initial waits for the account so it never switches letters mid-load.
   const initial = me ? label.trim().charAt(0).toUpperCase() || "U" : "";
   const close = () => setOpen(false);
+  const age = me ? ageLine(me) : null;
+  // The live wallet only while it's this account's, never the one before.
+  const address = walletOf(me) ?? walletStatusOf(wallet, me?.id).address;
+
+  function copyAddress(value: string) {
+    void navigator.clipboard
+      .writeText(value)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => undefined);
+  }
 
   return (
     <div className="relative">
@@ -166,6 +189,9 @@ export function AccountMenu({ lane }: { lane?: string }) {
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-[var(--ink)]">{label}</p>
+              {me?.username && label !== me.username ? (
+                <p className="truncate text-xs text-[var(--muted)]">@{me.username}</p>
+              ) : null}
               {me ? (
                 <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--muted)]">
                   {me.isMember ? (
@@ -176,19 +202,33 @@ export function AccountMenu({ lane }: { lane?: string }) {
                   ) : (
                     <span className="rounded-full bg-white/[0.08] px-2 py-0.5 font-semibold text-[var(--ink)]">Free</span>
                   )}
-                  <span className="inline-flex items-center gap-1">
-                    <span
-                      aria-hidden
-                      className={cx("h-1.5 w-1.5 rounded-full", me.ageVerified ? "bg-emerald-400" : "bg-[var(--accent)]")}
-                    />
-                    {AGE_LABEL[me.ageStatus]}
-                  </span>
+                  {age ? (
+                    <span className="inline-flex items-center gap-1">
+                      <span aria-hidden className={cx("h-1.5 w-1.5 rounded-full", AGE_DOT[age.tone])} />
+                      {age.label}
+                    </span>
+                  ) : null}
                 </p>
               ) : (
                 <p className="mt-1 text-xs text-[var(--muted)]">Loading your account…</p>
               )}
             </div>
           </div>
+
+          {address ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => copyAddress(address)}
+              aria-label={copied ? "Wallet address copied" : `Copy wallet address ${address}`}
+              className="mx-3 mb-2 flex min-h-10 w-[calc(100%-1.5rem)] items-center gap-3 rounded-xl bg-[var(--surface)] py-2 pl-3 pr-3 text-left text-sm transition-colors hover:bg-[var(--surface-2)] focus-visible:-outline-offset-2"
+            >
+              <span className="min-w-0 flex-1 text-[var(--muted)]">
+                Wallet <span className="font-mono text-xs text-[var(--ink)]">{shortAddress(address)}</span>
+              </span>
+              <span className="text-xs font-semibold text-[var(--accent)]">{copied ? "Copied" : "Copy"}</span>
+            </button>
+          ) : null}
 
           {me ? (
             <div className="mx-3 mb-2 flex items-center gap-3 rounded-xl bg-[var(--surface)] py-2 pl-3 pr-2">
@@ -214,8 +254,8 @@ export function AccountMenu({ lane }: { lane?: string }) {
           <div className="border-t border-[var(--line)] py-1.5">
             <MenuRow href="/profile" onClick={close} label="Profile" icon={<UserIcon />} />
             <MenuRow href="/settings" onClick={close} label="Settings" icon={<SettingsIcon />} />
-            {me && !me.ageVerified ? (
-              <MenuRow href="/verify" onClick={close} label="Verify age" icon={<ShieldIcon />} accent />
+            {age?.href ? (
+              <MenuRow href={age.href} onClick={close} label={age.label} icon={<ShieldIcon />} accent />
             ) : null}
             {me?.isAdmin ? <MenuRow href="/admin" onClick={close} label="Admin" icon={<AdminIcon />} /> : null}
           </div>

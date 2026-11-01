@@ -30,10 +30,11 @@ export const viewport: Viewport = {
 };
 
 // Runs while the HTML parses, before first paint: marks visitors who already
-// passed the age check (so the app shows at once instead of a blank screen)
-// and applies a folded sidebar (so it never flashes wide). Same keys as
-// age-gate.tsx and app-shell.tsx.
-const BOOT = `try{var k="simulust-age-ok",d=document.documentElement;if(localStorage.getItem(k)==="1"||sessionStorage.getItem(k)==="1")d.setAttribute("data-age-ok","");var c=location.pathname.indexOf("/date/")===0?localStorage.getItem("simulust-sidebar-chat")!=="0":localStorage.getItem("simulust-sidebar-collapsed")==="1";if(c)d.setAttribute("data-sidebar","collapsed")}catch(e){}`;
+// passed the age check (so the app shows at once instead of a blank screen),
+// marks a device that was turned away for being under 18 (so the refusal shows
+// at once, never the form), and applies a folded sidebar (so it never flashes
+// wide). Same keys as age-gate.tsx and app-shell.tsx.
+const BOOT = `try{var k="simulust-age-ok",d=document.documentElement;if(localStorage.getItem("simulust-age-refused")==="1")d.setAttribute("data-age-refused","");else if(localStorage.getItem(k)==="1"||sessionStorage.getItem(k)==="1")d.setAttribute("data-age-ok","");var c=location.pathname.indexOf("/date/")===0?localStorage.getItem("simulust-sidebar-chat")!=="0":localStorage.getItem("simulust-sidebar-collapsed")==="1";if(c)d.setAttribute("data-sidebar","collapsed")}catch(e){}`;
 
 // Written by the lane switcher in app-shell.tsx, so the first render already
 // shows the saved Girls / Anime / Guys lane.
@@ -48,6 +49,8 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <script dangerouslySetInnerHTML={{ __html: BOOT }} />
       </head>
       <body className="min-h-full font-sans">
+        {/* Privy (the wallet only) wraps AuthProvider, which renders WalletSync
+            inside both. */}
         <PrivyApp>
           <AgeGate>
             {/* Lanes sit above auth so the login modal can match its art to the lane. */}

@@ -1,59 +1,51 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { createRemoteJWKSet, importSPKI, jwtVerify, type JWTVerifyGetKey, type CryptoKey } from "jose";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/server/db";
 import { creditBalances, creditLedger, deletedIdentities, moderationEvents, users, type User } from "@/server/db/schema";
-import { env, features } from "@/server/env";
+import { env } from "@/server/env";
 import { forbidden, HttpError, unauthorized } from "@/server/http";
+import { readCookie, readSession } from "@/server/sessions";
 import { FREE } from "@/lib/pricing";
 
 export const DEV_USER_COOKIE = "simulust-dev-user";
-const PRIVY_COOKIE = "privy-token";
 
-let privyKey: Promise<CryptoKey | JWTVerifyGetKey> | undefined;
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-function verificationKey() {
-  privyKey ??= env.privyVerificationKey
-    ? importSPKI(env.privyVerificationKey.replace(/\\n/g, "\n"), "ES256")
-    : Promise.resolve(
-        createRemoteJWKSet(new URL(`https://auth.privy.io/api/v1/apps/${env.privyAppId}/jwks.json`)),
-      );
-  return privyKey;
+// Whether the browser's cookies may sign this request in. A request that
+// changes something and names another site as its Origin is a forged one
+// (CSRF), so it runs signed out. The proxy refuses these too; this holds even
+// where the proxy doesn't run. No Origin (same-origin GETs, server-to-server,
+// older browsers) is left to SameSite=Lax.
+function cookiesCount(request: Request) {
+  if (SAFE_METHODS.has(request.method.toUpperCase())) return true;
+  const origin = request.headers.get("origin");
+  if (origin === null) return true;
+  let from: string;
+  try {
+    from = new URL(origin).host;
+  } catch {
+    return false;
+  }
+  const own = (request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? new URL(request.url).host)
+    .split(",")[0]
+    .trim();
+  return from === own || from === new URL(env.appUrl).host;
 }
 
-function cookie(request: Request, name: string) {
-  const header = request.headers.get("cookie") ?? "";
-  for (const part of header.split(";")) {
-    const [key, ...rest] = part.trim().split("=");
-    if (key === name) return decodeURIComponent(rest.join("="));
+type Caller = { user: User } | { identity: string };
+
+// Who is calling: the account behind the session cookie, or in local
+// development, a dev handle from the x-dev-user header or the dev cookie.
+async function identify(request: Request): Promise<Caller | null> {
+  const trusted = cookiesCount(request);
+  if (trusted) {
+    const session = await readSession(request);
+    if (session) return { user: session.user };
   }
-  return undefined;
-}
-
-// Who is calling: a verified Privy user id (did:privy:...), or in local
-// development without Privy, a dev handle from a cookie or header.
-async function identify(request: Request): Promise<string | null> {
-  const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
-  const token = bearer ?? cookie(request, PRIVY_COOKIE);
-
-  if (token && features.privy) {
-    try {
-      const key = await verificationKey();
-      const { payload } = await jwtVerify(token, key as CryptoKey, {
-        issuer: "privy.io",
-        audience: env.privyAppId,
-        algorithms: ["ES256"],
-      });
-      return typeof payload.sub === "string" ? payload.sub : null;
-    } catch {
-      return null;
-    }
-  }
-
   if (env.allowDevAuth) {
-    const handle = request.headers.get("x-dev-user") ?? cookie(request, DEV_USER_COOKIE);
-    if (handle && /^[a-z0-9_-]{1,32}$/i.test(handle)) return `dev:${handle.toLowerCase()}`;
+    const handle = request.headers.get("x-dev-user") ?? (trusted ? readCookie(request, DEV_USER_COOKIE) : undefined);
+    if (handle && /^[a-z0-9_-]{1,32}$/i.test(handle)) return { identity: `dev:${handle.toLowerCase()}` };
   }
   return null;
 }
@@ -62,41 +54,55 @@ export function identityHash(privyId: string) {
   return createHash("sha256").update(privyId).digest("hex");
 }
 
-async function loadOrCreate(privyId: string): Promise<User> {
+// Admins are named by account id (ADMIN_USER_IDS), never by username, so nobody
+// can sign up into it. "dev:admin" is an admin in local development.
+function adminFor(user: Pick<User, "id" | "privyId">) {
+  return env.adminUserIds.includes(user.id) || (env.allowDevAuth && user.privyId === "dev:admin");
+}
+
+// Keeps lastSeenAt roughly current, and admin rights in step with the env.
+// Logins pass force, to record the sign-in itself.
+export async function touch(user: User, { force = false } = {}): Promise<User> {
+  const isAdmin = adminFor(user);
+  const stale = Date.now() - user.lastSeenAt.getTime() > 5 * 60_000;
+  if (!force && !stale && user.isAdmin === isAdmin) return user;
   const database = await db();
-  const isAdmin = env.adminPrivyIds.includes(privyId) || (env.allowDevAuth && privyId === "dev:admin");
+  const [updated] = await database
+    .update(users)
+    .set({ lastSeenAt: new Date(), isAdmin })
+    .where(eq(users.id, user.id))
+    .returning();
+  return updated ?? user;
+}
 
-  const [existing] = await database.select().from(users).where(eq(users.privyId, privyId)).limit(1);
-  if (existing) {
-    const stale = Date.now() - existing.lastSeenAt.getTime() > 5 * 60_000;
-    if (stale || existing.isAdmin !== isAdmin) {
-      const [updated] = await database
-        .update(users)
-        .set({ lastSeenAt: new Date(), isAdmin })
-        .where(eq(users.id, existing.id))
-        .returning();
-      return updated ?? existing;
-    }
-    return existing;
-  }
+type NewAccount = Omit<typeof users.$inferInsert, "id" | "isAdmin" | "createdAt" | "lastSeenAt">;
 
+// A new account with its credit balance and the signup credits, unless the
+// caller says it hasn't earned them (sign-up caps them per address) or this
+// login was deleted before (deletedIdentities). Usernames skip that last rule:
+// a freed username can go to anyone, so it says nothing about who's back, and
+// the per-address cap is what stops farming there. null when the login id or
+// the username is already taken; nothing is created then.
+export async function createAccount(
+  values: NewAccount,
+  { signupCredits = true }: { signupCredits?: boolean } = {},
+): Promise<User | null> {
+  const database = await db();
   return database.transaction(async (tx) => {
     const [created] = await tx
       .insert(users)
-      .values({ privyId, isAdmin })
-      .onConflictDoNothing({ target: users.privyId })
+      .values({ ...values, isAdmin: env.allowDevAuth && values.privyId === "dev:admin" })
+      .onConflictDoNothing()
       .returning();
-    if (!created) {
-      const [raced] = await tx.select().from(users).where(eq(users.privyId, privyId)).limit(1);
-      if (!raced) throw new Error("User insert raced and vanished.");
-      return raced;
-    }
-    const [returning] = await tx
-      .select({ hash: deletedIdentities.privyIdHash })
-      .from(deletedIdentities)
-      .where(eq(deletedIdentities.privyIdHash, identityHash(privyId)))
-      .limit(1);
-    const bonus = returning ? 0 : FREE.signupCredits;
+    if (!created) return null;
+    const [returning] = values.privyId.startsWith("acct:")
+      ? []
+      : await tx
+          .select({ hash: deletedIdentities.privyIdHash })
+          .from(deletedIdentities)
+          .where(eq(deletedIdentities.privyIdHash, identityHash(values.privyId)))
+          .limit(1);
+    const bonus = signupCredits && !returning ? FREE.signupCredits : 0;
     await tx.insert(creditBalances).values({ userId: created.id, balance: bonus });
     if (bonus) {
       await tx.insert(creditLedger).values({
@@ -110,6 +116,19 @@ async function loadOrCreate(privyId: string): Promise<User> {
     }
     return created;
   });
+}
+
+// Development identities are made on first sight. Username accounts are made
+// only by sign-up (POST /api/auth/signup).
+async function loadOrCreate(privyId: string): Promise<User> {
+  const database = await db();
+  const [existing] = await database.select().from(users).where(eq(users.privyId, privyId)).limit(1);
+  if (existing) return touch(existing);
+  const created = await createAccount({ privyId });
+  if (created) return created;
+  const [raced] = await database.select().from(users).where(eq(users.privyId, privyId)).limit(1);
+  if (!raced) throw new Error("User insert raced and vanished.");
+  return raced;
 }
 
 // An age check that shows a minor (an under-18 birth date, or Veriff's own
@@ -139,11 +158,17 @@ async function suspension(user: User) {
     : forbidden("This account has been suspended.");
 }
 
-export async function currentUser(request: Request): Promise<User | null> {
-  const privyId = await identify(request);
-  if (!privyId) return null;
-  const user = await loadOrCreate(privyId);
+// Throws the 403 a banned account gets everywhere. Login and recovery call it
+// once the password or code is right, so it says nothing to anyone else.
+export async function assertNotSuspended(user: User) {
   if (user.bannedAt) throw await suspension(user);
+}
+
+export async function currentUser(request: Request): Promise<User | null> {
+  const caller = await identify(request);
+  if (!caller) return null;
+  const user = "user" in caller ? await touch(caller.user) : await loadOrCreate(caller.identity);
+  await assertNotSuspended(user);
   return user;
 }
 
@@ -153,20 +178,33 @@ export async function requireUser(request: Request): Promise<User> {
   return user;
 }
 
+// Whether this account counts as an adult for explicit content. With the
+// default age gate, a date of birth of 18 or over given to the app is enough;
+// with AGE_VERIFICATION=id only a completed ID check is. Either way an
+// explicit hold (the user said they're under 18) switches it off until review.
 export function isAgeVerified(user: User) {
-  return user.ageStatus === "approved" && user.ageVerifiedAt !== null;
+  if (user.explicitHoldAt) return false;
+  const idChecked = user.ageStatus === "approved" && user.ageVerifiedAt !== null;
+  return env.ageVerification === "id" ? idChecked : idChecked || user.ageAttestedAt !== null;
 }
 
-// Anything explicit (explicit chat mode, photos, voice notes, video) needs a
-// completed age check. Text chat without explicit content does not.
+// Anything explicit (chat, photos, voice notes, video) needs the age check
+// above. A held account gets its own code: confirming an age can't unlock it,
+// only the review can, so the app never offers to.
 export function requireVerifiedAdult(user: User) {
+  if (user.explicitHoldAt) {
+    throw new HttpError(403, "Paused while we review this account.", "explicit_hold");
+  }
   if (!isAgeVerified(user)) {
     throw new HttpError(403, "Verify your age to unlock this.", "age_verification_required");
   }
 }
 
+// The whole site is uncensored: there's no explicit switch. Every adult who
+// confirmed their age (at sign-up) gets explicit content, unless an explicit
+// hold is open. Kept as its own name so call sites say what they check.
 export function explicitAllowed(user: User) {
-  return isAgeVerified(user) && user.settings.explicit === true;
+  return isAgeVerified(user);
 }
 
 export function requireAdmin(user: User) {

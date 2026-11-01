@@ -569,11 +569,24 @@ function QueueTab({ onOpenUser }: { onOpenUser: (userId: string) => void }) {
 function UsersTab({ initialQuery }: { initialQuery: string }) {
   const [query, setQuery] = useState(initialQuery);
   const [submitted, setSubmitted] = useState(initialQuery);
-  const list = useAdminList<AdminUserDTO>(`/api/admin/users?q=${encodeURIComponent(submitted)}`, "users");
+  // Accounts whose explicit content is on hold because they said they're under 18.
+  const [holdsOnly, setHoldsOnly] = useState(false);
+  const list = useAdminList<AdminUserDTO>(
+    `/api/admin/users?q=${encodeURIComponent(submitted)}${holdsOnly ? "&hold=1" : ""}`,
+    "users",
+  );
   const users = list.items ?? [];
 
   return (
     <div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Chip active={!holdsOnly} onClick={() => setHoldsOnly(false)}>
+          All users
+        </Chip>
+        <Chip active={holdsOnly} onClick={() => setHoldsOnly(true)}>
+          On explicit hold
+        </Chip>
+      </div>
       <form
         className="flex flex-col gap-2 sm:flex-row"
         onSubmit={(event) => {
@@ -593,7 +606,9 @@ function UsersTab({ initialQuery }: { initialQuery: string }) {
       </form>
       <div className="mt-4 space-y-3">
         <ListState loading={list.loading} error={list.error} empty={!list.items} onRetry={() => void list.reload()} />
-        {list.items && !users.length ? <EmptyState title="No users match" /> : null}
+        {list.items && !users.length ? (
+          <EmptyState title={holdsOnly ? "No accounts on an explicit hold" : "No users match"} />
+        ) : null}
         {users.map((user) => (
           <UserRow
             key={user.id}
@@ -610,8 +625,26 @@ function UserRow({ user, onChange }: { user: AdminUserDTO; onChange: (user: Admi
   const api = useApi();
   const { me } = useSession();
   const [reason, setReason] = useState("");
+  const [holdReason, setHoldReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function clearHold() {
+    setBusy(true);
+    setError(null);
+    try {
+      const body = await api<{ user: AdminUserDTO }>("/api/admin/users", {
+        method: "PATCH",
+        json: { id: user.id, explicitHold: false, reason: holdReason.trim() },
+      });
+      onChange(body.user);
+      setHoldReason("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "That didn't work. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function setBan(banned: boolean) {
     setBusy(true);
@@ -639,14 +672,40 @@ function UserRow({ user, onChange }: { user: AdminUserDTO; onChange: (user: Admi
         {user.isAdmin ? <span className={cx(pill, "bg-[var(--accent-soft)] text-[var(--accent)]")}>admin</span> : null}
         {user.bannedAt ? <span className={cx(pill, "bg-red-500/20 text-red-200")}>banned {when(user.bannedAt)}</span> : null}
         {user.ageLocked ? <span className={cx(pill, "bg-red-500/20 text-red-200")}>age check: under 18</span> : null}
+        {user.explicitHoldAt ? (
+          <span className={cx(pill, "bg-sky-400/15 text-sky-200")}>explicit hold {when(user.explicitHoldAt)}</span>
+        ) : null}
       </div>
       <p className="mt-1 break-all text-xs text-[var(--muted)]">
         {user.id} · {user.privyId}
       </p>
       <p className="mt-1 text-xs text-[var(--muted)]">
-        Age: {user.ageStatus} · {user.balance.toLocaleString()} credits · joined {when(user.createdAt)} · last seen{" "}
-        {when(user.lastSeenAt)}
+        ID check: {user.ageStatus} · age confirmed: {user.ageAttestedAt ? when(user.ageAttestedAt) : "no"} ·{" "}
+        {user.balance.toLocaleString()} credits · joined {when(user.createdAt)} · last seen {when(user.lastSeenAt)}
       </p>
+      {user.explicitHoldAt ? (
+        <div className="mt-3 rounded-xl border border-sky-400/30 bg-sky-400/[0.06] p-3">
+          <p className="text-xs leading-5 text-sky-100">
+            They said they&apos;re under 18, in chat or when confirming their age, so explicit content is off. Read the
+            safety queue and their chats first. Clear the hold only if you&apos;re satisfied they&apos;re an adult; if
+            they&apos;re a minor, keep it and ban the account.
+          </p>
+          {user.id !== me?.id ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <input
+                value={holdReason}
+                onChange={(event) => setHoldReason(event.target.value)}
+                placeholder="Why it's safe to clear (kept in the audit log)"
+                maxLength={500}
+                className={cx(input, "h-10 sm:max-w-sm")}
+              />
+              <button type="button" disabled={busy || !holdReason.trim()} className={ghost} onClick={() => void clearHold()}>
+                Clear hold
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {user.ageLocked ? (
         <p className="mt-2 text-xs leading-5 text-red-200">
           An age check read a birth date under 18. Unbanning is the review: it closes the finding, and they have to

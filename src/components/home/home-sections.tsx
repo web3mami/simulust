@@ -151,9 +151,10 @@ const FAQ: { q: string; a: ReactNode }[] = [
     q: "Who can use Simulust?",
     a: (
       <>
-        Adults only. You must be at least 18, and old enough to view adult content where you live. Explicit messages, photos,
-        voice notes and video unlock after a quick ID check, done by our verification provider, so we never keep your document.
-        Every character is a fictional adult and every image is AI-generated.
+        Adults only. You must be at least 18, and old enough to view adult content where you live. You confirm your date of
+        birth when you sign up, and from then on everything is uncensored: explicit chat, photos, voice notes and video, with
+        nothing to switch on. We keep only when you confirmed it, never the date itself. Every character is a fictional adult and
+        every image is AI-generated.
       </>
     ),
   },

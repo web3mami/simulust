@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, notInArray, or } from "drizzle-orm";
 import { z } from "zod";
 import { UNDERAGE_FINDING } from "@/server/auth";
 import { db } from "@/server/db";
@@ -8,14 +8,24 @@ import { requireAdminUser } from "../_lib/server";
 import type { AdminModerationEventDTO, AdminReviewResult } from "../_lib/types";
 
 // Events that need a person to look at them, unreviewed, in this order: age
-// checks that read an under-18 birth date, people saying they're under 18, then
-// blocks and flags. Report events are escalated too, but they're worked from
-// the reports queue. Each group is capped on its own, so a flood of one kind
-// (someone repeating "I'm 16") can't push another out of view.
+// checks that read an under-18 birth date, people saying they're under 18,
+// content blocked as minor, then every other block and flag. Report events are
+// escalated too, but they're worked from the reports queue. Each group is
+// capped on its own, so a flood of one kind (someone repeating "I'm 16", or a
+// run of one-person refusals or classifier outages) can't push another out of
+// view.
+const MINOR = ["minor", "report_csam"];
 const GROUPS = [
   and(eq(moderationEvents.action, "escalated"), eq(moderationEvents.category, UNDERAGE_FINDING)),
-  and(eq(moderationEvents.action, "escalated"), eq(moderationEvents.category, "self_declared_minor")),
-  inArray(moderationEvents.action, ["blocked", "flagged"]),
+  and(
+    eq(moderationEvents.action, "escalated"),
+    inArray(moderationEvents.category, ["self_declared_minor", "attested_minor"]),
+  ),
+  and(eq(moderationEvents.action, "blocked"), inArray(moderationEvents.category, MINOR)),
+  or(
+    eq(moderationEvents.action, "flagged"),
+    and(eq(moderationEvents.action, "blocked"), notInArray(moderationEvents.category, MINOR)),
+  ),
 ];
 const PER_GROUP = 100;
 
@@ -48,7 +58,8 @@ export const GET = route(async (request: Request) => {
   return Response.json({ events });
 });
 
-const reviewed = z.object({ ids: z.array(z.number().int().positive()).min(1).max(200) });
+// Everything the queue can show, so "Mark all shown" fits in one request.
+const reviewed = z.object({ ids: z.array(z.number().int().positive()).min(1).max(GROUPS.length * PER_GROUP) });
 
 export const PATCH = route(async (request: Request) => {
   await requireAdminUser(request);

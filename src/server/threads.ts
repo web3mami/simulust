@@ -15,7 +15,7 @@ import {
 } from "@/server/db/schema";
 import { findCharacterFor, requireCharacter, toCharacterDTO } from "@/server/characters";
 import { notFound } from "@/server/http";
-import { toMediaDTO } from "@/server/media";
+import { isExplicit, lockedMediaDTO, toMediaDTO } from "@/server/media";
 import type { MessageDTO, ThreadDTO } from "@/lib/api-types";
 
 export const PAGE_SIZE = 50;
@@ -75,6 +75,8 @@ async function mediaExtras(rows: { message: Message; media: Media | null }[]) {
   return { voiceByMessage, videoBySource };
 }
 
+// The character here is the plain DTO: chat lists never carry nude art (the
+// chat page asks /api/characters/[id] for it, per viewer).
 export function toThreadDTO(thread: Thread, character: CharacterRow): ThreadDTO {
   return {
     id: thread.id,
@@ -141,7 +143,11 @@ export async function listThreads(user: User): Promise<ThreadDTO[]> {
 // database but millisecond on the wire, so the page includes anything within
 // that millisecond and the client drops ids it already has; otherwise a message
 // sharing the boundary millisecond could be skipped.
-export async function loadMessages(threadId: string, before?: Date) {
+// `explicit`: whether the viewer may see explicit media right now
+// (explicitAllowed). Without it (an explicit hold placed since, or an account
+// that hasn't confirmed its age) explicit photos and the clips made from them
+// come back locked, with no URL.
+export async function loadMessages(threadId: string, before?: Date, explicit = false) {
   const database = await db();
   const rows = await database
     .select({ message: messages, media })
@@ -157,12 +163,16 @@ export async function loadMessages(threadId: string, before?: Date) {
     .limit(PAGE_SIZE);
   const { voiceByMessage, videoBySource } = await mediaExtras(rows);
   return {
-    messages: rows.reverse().map((row) =>
-      toMessageDTO(row.message, row.media, {
-        voice: voiceByMessage.get(row.message.id),
-        video: row.media ? videoBySource.get(row.media.id) : null,
-      }),
-    ),
+    messages: rows.reverse().map((row) => {
+      const video = row.media ? (videoBySource.get(row.media.id) ?? null) : null;
+      const dto = toMessageDTO(row.message, row.media, { voice: voiceByMessage.get(row.message.id), video });
+      if (explicit) return dto;
+      return {
+        ...dto,
+        media: row.media && isExplicit(row.media) ? lockedMediaDTO(row.media) : dto.media,
+        video: video && isExplicit(video, row.media) ? lockedMediaDTO(video) : dto.video,
+      };
+    }),
     hasMore: rows.length === PAGE_SIZE,
   };
 }

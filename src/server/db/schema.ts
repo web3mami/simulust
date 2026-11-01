@@ -20,15 +20,24 @@ const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull(
 export type UserSettings = {
   // Characters only send photos or voice notes on their own when the user opts in.
   unpromptedMedia?: boolean;
-  // Explicit content stays off until the user is verified and turns it on.
-  explicit?: boolean;
-  // When explicit content was first turned on: the record of GDPR Art. 9 consent.
+  // When the user agreed at sign-up to explicit content: the record of GDPR
+  // Art. 9 consent. Explicit content itself has no switch; every confirmed
+  // adult gets it.
   explicitConsentAt?: string;
 };
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
+  // The login identity: "acct:<username>" for username accounts, "dev:<handle>"
+  // in local development, "did:privy:..." for accounts from the old Privy login.
   privyId: text("privy_id").notNull().unique(),
+  // Username accounts: the login name (lowercase, unique) and a scrypt hash of
+  // the password.
+  username: text("username").unique(),
+  passwordHash: text("password_hash"),
+  // There's no email to reset a forgotten password, so sign-up shows a one-time
+  // recovery code instead. Only its hash is kept.
+  recoveryCodeHash: text("recovery_code_hash"),
   displayName: text("display_name").notNull().default("You"),
   walletAddress: text("wallet_address"),
   isAdmin: boolean("is_admin").notNull().default(false),
@@ -36,6 +45,12 @@ export const users = pgTable("users", {
     .notNull()
     .default("none"),
   ageVerifiedAt: timestamp("age_verified_at", { withTimezone: true }),
+  // When the user gave a date of birth showing they're 18 or older (the age
+  // gate's self-declaration; only this time is stored, never the date).
+  ageAttestedAt: timestamp("age_attested_at", { withTimezone: true }),
+  // Set when the user says they're under 18: explicit content stays off until
+  // an admin reviews the account.
+  explicitHoldAt: timestamp("explicit_hold_at", { withTimezone: true }),
   memberUntil: timestamp("member_until", { withTimezone: true }),
   settings: jsonb("settings").$type<UserSettings>().notNull().default({}),
   bannedAt: timestamp("banned_at", { withTimezone: true }),
@@ -74,6 +89,11 @@ export const characters = pgTable(
     tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
     imageUrl: text("image_url"),
     imageMediaId: uuid("image_media_id"),
+    // Nude art, official or user-made, served only through
+    // /api/characters/<id>/explicit-image to viewers explicitAllowed lets in
+    // (signed in, age confirmed, no hold), never from /public.
+    explicitImageUrl: text("explicit_image_url"),
+    explicitImageMediaId: uuid("explicit_image_media_id"),
     hair: text("hair"),
     hairStyle: text("hair_style"),
     eyeColor: text("eye_color"),
@@ -167,7 +187,7 @@ export const media = pgTable(
     characterId: text("character_id"),
     threadId: uuid("thread_id"),
     kind: text("kind", { enum: ["image", "audio", "video"] }).notNull(),
-    purpose: text("purpose", { enum: ["portrait", "chat", "voice", "video", "avatar"] }).notNull(),
+    purpose: text("purpose", { enum: ["portrait", "chat", "voice", "video", "avatar", "studio"] }).notNull(),
     status: text("status", { enum: ["pending", "ready", "failed", "blocked"] }).notNull().default("pending"),
     storageKey: text("storage_key"),
     mimeType: text("mime_type"),
@@ -380,6 +400,21 @@ export const deletedIdentities = pgTable("deleted_identities", {
   privyIdHash: text("privy_id_hash").primaryKey(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Signed-in browsers. The cookie holds a random token; only its SHA-256 is
+// stored, so a leaked table can't be replayed.
+export const sessions = pgTable(
+  "sessions",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: createdAt(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("sessions_user_idx").on(table.userId)],
+);
 
 export const rateLimits = pgTable("rate_limits", {
   key: text("key").primaryKey(),

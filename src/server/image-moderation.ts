@@ -17,8 +17,8 @@ import { logModeration, type ModerationContext } from "@/server/safety/moderatio
 
 export type ImageModerationContext = ModerationContext & {
   targetType: "image" | "video";
-  // Nudity is fine for verified adults who turned explicit content on. Nothing
-  // else on the block list is ever fine.
+  // Nudity is fine for confirmed adults (explicitAllowed). Nothing else on the
+  // block list is ever fine.
   allowExplicit?: boolean;
 };
 

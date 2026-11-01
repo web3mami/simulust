@@ -6,7 +6,7 @@ export const metadata: Metadata = { title: "Safety · Simulust" };
 
 export default function SafetyPage() {
   return (
-    <DocPage title="Safety" updated="October 26, 2026">
+    <DocPage title="Safety" updated="October 28, 2026">
       <h2>If you&apos;re struggling right now</h2>
       <p>
         If you&apos;re thinking about suicide or hurting yourself, please reach out to a person now. These services are
@@ -62,6 +62,30 @@ export default function SafetyPage() {
         <li>
           We don&apos;t contact anyone or share your messages because of this. If you&apos;re in immediate danger,
           please call emergency services yourself.
+        </li>
+      </ul>
+
+      <h2>Adults only</h2>
+      <ul>
+        <li>
+          Everyone gives a date of birth before entering. Under 18, we don&apos;t let you in, and the device remembers.
+        </li>
+        <li>
+          Creating an account asks for your date of birth again, and our server checks it. Under 18, no account is
+          made.
+        </li>
+        <li>
+          Simulust is uncensored for signed-in adults, with no setting to switch it on. Visitors who aren&apos;t signed
+          in see only non-nude art, and nude images are never sent to them.
+        </li>
+        <li>
+          If someone signed in says they&apos;re under 18 (on the age screen, in a chat, in a photo request or in Video
+          Studio details), we pause explicit content on the account until a person on our team reviews it, and
+          characters stop writing explicitly.
+        </li>
+        <li>
+          Every character is a fictional adult, and every image and video is checked for apparent age before anyone
+          sees it.
         </li>
       </ul>
 

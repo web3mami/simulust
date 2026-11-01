@@ -8,7 +8,8 @@ at a time.
 Model choices (all licensed for commercial use):
   realistic: Tongyi-MAI/Z-Image-Turbo (Apache-2.0, default) or lodestones/Chroma1-HD (Apache-2.0)
   anime:     cagliostrolab/animagine-xl-4.0 (CreativeML Open RAIL++-M)
-  video:     Wan-AI/Wan2.2-TI2V-5B-Diffusers (Apache-2.0), image-to-video
+  video:     Wan-AI/Wan2.2-TI2V-5B-Diffusers (Apache-2.0), image-to-video, with an
+             optional vetted LoRA (VIDEO_LORA, see README "Explicit motion")
 """
 
 from __future__ import annotations
@@ -40,6 +41,11 @@ LORA_DIR = Path(os.environ.get("LORA_DIR", "/loras"))
 LORA_SCALE = float(os.environ.get("LORA_SCALE", "0.9"))
 OFFLOAD = os.environ.get("OFFLOAD", "1") == "1"
 VIDEO_STEPS = int(os.environ.get("VIDEO_STEPS", "40"))
+# An optional LoRA for the video model, loaded into Wan with every clip: a local
+# .safetensors path, or a Hugging Face file as "owner/repo@revision/file.safetensors"
+# (pin the revision you vetted). See "Explicit motion" in README.md.
+VIDEO_LORA = os.environ.get("VIDEO_LORA", "").strip()
+VIDEO_LORA_SCALE = float(os.environ.get("VIDEO_LORA_SCALE", "1.0"))
 VIDEO_MAX_AREA = int(os.environ.get("VIDEO_MAX_AREA", str(704 * 1280)))  # 720p
 VIDEO_FPS = 24
 FAKE = os.environ.get("FAKE_MODELS", "0") == "1"
@@ -231,6 +237,58 @@ def _sdxl_long_prompt(pipe, prompt: str, negative_prompt: str) -> dict:
 
 
 @dataclass
+class LoraSource:
+    """Where a LoRA comes from: a local file, or a file in a Hugging Face repo."""
+
+    path: Optional[Path] = None
+    repo: Optional[str] = None
+    revision: Optional[str] = None
+    filename: Optional[str] = None
+
+    @property
+    def label(self) -> str:
+        if self.path is not None:
+            return self.path.name
+        return f"{self.repo}@{self.revision or 'main'}/{self.filename}"
+
+
+_HF_LORA = re.compile(
+    r"^(?:hf://)?(?P<repo>[A-Za-z0-9][\w.-]*/[\w.-]+)(?:@(?P<revision>[\w.-]+))?/(?P<filename>[\w./-]+\.safetensors)$"
+)
+
+
+def parse_lora_source(value: str) -> LoraSource:
+    """VIDEO_LORA as a LoraSource. A path that exists (or starts with / or .)
+    is local; "owner/repo[@revision]/path/file.safetensors" (optionally with
+    hf://) is a Hugging Face file. Only .safetensors: pickled weights can run code."""
+    value = value.strip()
+    if not value:
+        raise ValueError("empty LoRA source")
+    local = Path(value).expanduser()
+    if local.exists() or value.startswith(("/", ".", "~")):
+        if local.suffix != ".safetensors":
+            raise ValueError(f"VIDEO_LORA must be a .safetensors file, not {local.name}")
+        return LoraSource(path=local)
+    match = _HF_LORA.match(value)
+    if not match or ".." in match.group("filename"):
+        raise ValueError(
+            f"VIDEO_LORA {value!r} is neither an existing file nor owner/repo@revision/file.safetensors"
+        )
+    return LoraSource(repo=match.group("repo"), revision=match.group("revision"), filename=match.group("filename"))
+
+
+def _lora_file(source: LoraSource) -> Path:
+    """The LoRA on local disk, downloading a Hugging Face file into HF_HOME."""
+    if source.path is not None:
+        if not source.path.is_file():
+            raise FileNotFoundError(f"VIDEO_LORA file {source.path} does not exist")
+        return source.path
+    from huggingface_hub import hf_hub_download
+
+    return Path(hf_hub_download(repo_id=source.repo, filename=source.filename, revision=source.revision))
+
+
+@dataclass
 class VideoResult:
     mp4: bytes
     frames: List[bytes]
@@ -240,9 +298,17 @@ class VideoModel:
     def __init__(self) -> None:
         self._pipe = None
         self._load_lock = threading.Lock()
+        # Parsed at start, so a malformed VIDEO_LORA stops the worker instead of
+        # failing every clip later.
+        self.lora = parse_lora_source(VIDEO_LORA) if VIDEO_LORA else None
 
     def loaded(self) -> bool:
         return self._pipe is not None
+
+    def lora_info(self) -> Optional[dict]:
+        if self.lora is None:
+            return None
+        return {"source": self.lora.label, "scale": VIDEO_LORA_SCALE}
 
     def pipe(self):
         with self._load_lock:
@@ -255,8 +321,24 @@ class VideoModel:
                 # VAE as the first latent frame (expand_timesteps in model_index.json).
                 vae = AutoencoderKLWan.from_pretrained(VIDEO_REPO, subfolder="vae", torch_dtype=torch.float32)
                 pipe = WanImageToVideoPipeline.from_pretrained(VIDEO_REPO, vae=vae, torch_dtype=torch.bfloat16)
+                if self.lora is not None:
+                    self._load_lora(pipe, self.lora)
                 self._pipe = _place(pipe)
             return self._pipe
+
+    @staticmethod
+    def _load_lora(pipe, source: LoraSource) -> None:
+        """Loads the video LoRA once, before offloading, and keeps it on for
+        every clip. It changes how motion and bodies render, never what the
+        prompt screen, the tagger or the app's frame moderation check."""
+        if not hasattr(pipe, "load_lora_weights"):
+            raise RuntimeError(
+                f"{type(pipe).__name__} has no LoRA loader in this diffusers version; upgrade diffusers or unset VIDEO_LORA"
+            )
+        path = _lora_file(source)
+        log.info("Loading video LoRA %s at scale %s", source.label, VIDEO_LORA_SCALE)
+        pipe.load_lora_weights(str(path.parent), weight_name=path.name, adapter_name="video")
+        pipe.set_adapters(["video"], adapter_weights=[VIDEO_LORA_SCALE])
 
     def generate(self, *, image: Image.Image, prompt: str, negative_prompt: str, seconds: int, seed: int) -> VideoResult:
         if FAKE:

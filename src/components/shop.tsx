@@ -839,7 +839,7 @@ export function Shop({ focus = "membership" }: { focus?: "membership" | "packs" 
         <section>
           <SectionTitle accent="Pay">with USDC or SOL</SectionTitle>
           <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[var(--muted)]">
-            Every price is in US dollars. You pay on Solana, from your connected wallet or any Solana Pay wallet.
+            Every price is in US dollars. You pay on Solana, from the wallet that comes with your account or any Solana Pay wallet.
           </p>
           <div className="mt-6">
             <PaymentGuide />

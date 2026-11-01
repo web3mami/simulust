@@ -116,7 +116,7 @@ function unleet(text: string, one: "i" | "l") {
 
 // "t e e n", "c.h.i.l.d" and "t/e/e/n" read as words. A leading "a" or "i" stays
 // a word of its own, so "a k i d" reads as "a kid".
-function joinSpelled(text: string) {
+export function joinSpelled(text: string) {
   return text.replace(/\b[a-z](?:[^a-z0-9'"]{1,3}[a-z]\b){2,}/g, (run) => {
     const letters = run.replace(/[^a-z]/g, "");
     return /^[ai] /.test(run) && letters.length > 3 ? `${letters[0]} ${letters.slice(1)}` : letters;
@@ -125,7 +125,7 @@ function joinSpelled(text: string) {
 
 // "lo.li" and "jail_bait" read as words: punctuation inside a word joins it, a
 // space never does, so "lol icon" and "under a gentle rain" stay apart.
-function joinPunctuated(text: string) {
+export function joinPunctuated(text: string) {
   return text.replace(/(?<=[a-z])[^a-z0-9\s']+(?=[a-z])/g, "");
 }
 
@@ -1004,11 +1004,12 @@ const IMAGE_RULES = [
 // word, as NEAR_SEXUAL reads "near". The classifier's policy counts all of these
 // as minor content. Not styles adults wear too ("pigtails", "braces", "a
 // backpack"), not a bare "baby", which is as often a pet name, and not "a minor
-// tilt of the head".
+// tilt of the head". High school counts: "her old high school cheer uniform,
+// topless" is school wear all the same.
 const MINOR_MARKER = [
   ...IMAGE_AGES,
   termSource([
-    ...AMBIGUOUS_TERMS.filter((term) => term !== "minor" && term !== "high-school"),
+    ...AMBIGUOUS_TERMS.filter((term) => term !== "minor"),
     ...LOWER_SCHOOLS,
     "student",
     "pupil",
@@ -1067,8 +1068,16 @@ const MINOR_MARKER = [
   CJK_CHILD,
   GERMAN_CHILD,
 ].join("|");
-// In a picture, stripping is undressing too.
-const SEXUAL_IN_IMAGE = `(?:${SEXUAL}|${termSource(["strip", "stripping", "stripped", "topless", "bottomless"])})`;
+// In a picture, undressing and underwear are sexual too ("topless", "in her
+// bra", "stripping"), though not a strip of light, a comic strip, a bottomless
+// brunch or pantyhose.
+const UNDRESSED_IN_IMAGE = [
+  termSource(["topless", "braless", "bra", "underwear", "undies", "knickers", "unclothed", "disrobe", "disrobed", "disrobing"]),
+  String.raw`(?<![a-z])panty(?![a-z])(?!\s?-?\s?hose)`,
+  String.raw`(?<![a-z])bottomless(?![a-z])(?!\s?-?\s?(?:brunch|mimosas?|drinks?|coffee|cups?|pits?|fries)\b)`,
+  String.raw`(?<![a-z])(?<!\b(?:comic|landing|led|light|film|vegas|sunset|bacon) )strip(?:s|ped|ping|pers?|tease)?(?![a-z])(?!\s?-?\s?(?:of|back|malls?|lights?|lighting|steaks?)\b)`,
+];
+const SEXUAL_IN_IMAGE = `(?:${SEXUAL}|${UNDRESSED_IN_IMAGE.join("|")})`;
 const MINOR_SIGNAL = rule(
   `(?:${MINOR_MARKER})${GAP}${SEXUAL_IN_IMAGE}|${SEXUAL_IN_IMAGE}${GAP}(?:${MINOR_MARKER})|(?:${CJK_CHILD})${CJK_NEAR}${SEXUAL_IN_IMAGE}|${SEXUAL_IN_IMAGE}${CJK_NEAR}(?:${CJK_CHILD})`,
 );
@@ -1312,8 +1321,10 @@ const NOT_LOOKING_BACK = "(?<!when )(?<!since )(?<!after )(?<!before )(?<!until 
 const DECLARES_MINOR = [
   NOT_LOOKING_BACK + statedAge(FIRST, AGE),
   NOT_LOOKING_BACK + statedYearsOld(FIRST),
-  String.raw`\b${FIRST_PERSON} (?:(?:only|just|still) )?(?:under|below|younger than|almost|nearly|not yet|not even|not|sub) ?-?(?:18|eighteen)\b(?!\s?(?:anymore|any more|any longer|again|forever|either|\+|or (?:older|over)|and (?:up|over)))${NOT_AN_AGE}`,
+  String.raw`\b${FIRST_PERSON} (?:(?:only|just|still) )?(?:under|below|younger than|almost|nearly|not yet|not even|not quite|not|sub) ?-?(?:18|eighteen)\b(?!\s?(?:anymore|any more|any longer|again|forever|either|\+|or (?:older|over)|and (?:up|over)))${NOT_AN_AGE}`,
   String.raw`\b${FIRST_PERSON} (?:(?:still|just|only|technically) )?(?:an? )?(?:underage|under-age|underaged|teen|teenager|preteen|pre-teen|tween|(?:high|middle|grade|elementary|pre)[ -]?schooler)\b`,
+  // "I turn 18 next month", "I'll be eighteen in May", "I'm turning 18 soon".
+  String.raw`\b(?:i(?:'ll| will)? (?:turn|be)|${FIRST_PERSON} turning) (?:18|eighteen) (?:next|in|this|soon|on|tomorrow|later)\b`,
   minorNoun(FIRST_PERSON),
   FIRST_PERSON_KID,
   GOES_TO_SCHOOL,

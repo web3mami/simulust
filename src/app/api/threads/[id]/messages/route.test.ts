@@ -13,11 +13,11 @@ vi.mock("@/server/llm", async (importOriginal) => {
 });
 
 import { POST } from "./route";
-import { currentUser } from "@/server/auth";
+import { currentUser, explicitAllowed, isAgeVerified } from "@/server/auth";
 import { balanceOf } from "@/server/credits";
 import { CRISIS_FALLBACK_REPLY, CRISIS_NOTICE } from "@/server/crisis";
 import { db } from "@/server/db";
-import { creditBalances, creditLedger, messages, moderationEvents, rateLimits } from "@/server/db/schema";
+import { creditBalances, creditLedger, messages, moderationEvents, rateLimits, users } from "@/server/db/schema";
 import { env, features } from "@/server/env";
 import { stream } from "@/server/llm";
 import { REFUSAL } from "@/server/safety/text";
@@ -84,6 +84,13 @@ async function eventsFor(userId: string) {
   return database.select().from(moderationEvents).where(eq(moderationEvents.userId, userId));
 }
 
+// An adult per the date of birth given at sign-up. That's all explicit chat
+// needs: there's no switch to turn on.
+async function explicitAdult(userId: string) {
+  const database = await db();
+  await database.update(users).set({ ageAttestedAt: new Date() }).where(eq(users.id, userId));
+}
+
 const deltas = (events: ChatStreamEvent[]) =>
   events.map((event) => (event.type === "delta" ? event.text : "")).join("");
 const done = (events: ChatStreamEvent[]) => events.find((event) => event.type === "done");
@@ -94,9 +101,11 @@ const finalText = (events: ChatStreamEvent[]) => {
 const notices = (events: ChatStreamEvent[]) =>
   events.flatMap((event) => (event.type === "notice" ? [event.message.content] : []));
 
+// Migrating a fresh in-memory database can take a while when every test file
+// is starting its own at once.
 beforeAll(async () => {
   await db();
-});
+}, 60_000);
 
 afterEach(() => {
   features.remoteModeration = false;
@@ -214,11 +223,61 @@ describe("self-declared minors", () => {
     expect((await eventsFor(owner.id)).some((event) => event.category === "self_declared_minor" && event.action === "escalated")).toBe(true);
   });
 
+  it("refuses and holds an under-18 statement the blocklist lets through, and asks for the age again later", async () => {
+    const owner = await user("chat-minor-quiet");
+    await explicitAdult(owner.id);
+    const { thread } = await getOrCreateThread(owner, "mira");
+    expect(notices(await send("chat-minor-quiet", thread.id, "me: 16"))).toEqual([REFUSAL.minor]);
+    const after = await user("chat-minor-quiet");
+    expect(after.explicitHoldAt).not.toBeNull();
+    expect(after.ageAttestedAt).toBeNull();
+    expect(explicitAllowed(after)).toBe(false);
+  });
+
   it("refuses, without escalating, an age stated about someone else", async () => {
     const owner = await user("chat-minor-other");
+    await explicitAdult(owner.id);
     const { thread } = await getOrCreateThread(owner, "mira");
     expect(notices(await send("chat-minor-other", thread.id, "she is 15, right?"))).toEqual([REFUSAL.minor]);
     expect((await eventsFor(owner.id)).map((event) => event.category)).toEqual(["minor"]);
+    // Not about the writer, so explicit content stays on.
+    expect(explicitAllowed(await user("chat-minor-other"))).toBe(true);
+  });
+
+  it("turns explicit content off for someone who says they are under 18", async () => {
+    const owner = await user("chat-minor-hold");
+    await explicitAdult(owner.id);
+    expect(explicitAllowed(await user("chat-minor-hold"))).toBe(true);
+    const { thread } = await getOrCreateThread(owner, "mira");
+
+    expect(notices(await send("chat-minor-hold", thread.id, "I'm 16, is that ok?"))).toEqual([REFUSAL.minor]);
+    const held = await user("chat-minor-hold");
+    expect(held.explicitHoldAt).not.toBeNull();
+    expect(isAgeVerified(held)).toBe(false);
+    expect(explicitAllowed(held)).toBe(false);
+
+    // Saying it again keeps the first hold's time.
+    await send("chat-minor-hold", thread.id, "I'm 16");
+    expect((await user("chat-minor-hold")).explicitHoldAt).toEqual(held.explicitHoldAt);
+  });
+
+  it("puts a self-declared minor in crisis on hold too", async () => {
+    const owner = await user("chat-minor-crisis-hold");
+    await explicitAdult(owner.id);
+    const { thread } = await getOrCreateThread(owner, "jonah");
+    const events = await send("chat-minor-crisis-hold", thread.id, "I'm 15 and I want to kill myself tonight");
+    expect(events.map((event) => event.type)).toEqual(["crisis", "notice"]);
+    expect(explicitAllowed(await user("chat-minor-crisis-hold"))).toBe(false);
+  });
+
+  it("leaves an ordinary adult's explicit access alone", async () => {
+    const owner = await user("chat-minor-none");
+    await explicitAdult(owner.id);
+    const { thread } = await getOrCreateThread(owner, "mira");
+    expect(done(await send("chat-minor-none", thread.id, "I'm 34 and just got off work"))).toBeDefined();
+    const after = await user("chat-minor-none");
+    expect(after.explicitHoldAt).toBeNull();
+    expect(explicitAllowed(after)).toBe(true);
   });
 });
 

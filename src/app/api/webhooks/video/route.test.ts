@@ -42,6 +42,7 @@ const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit
 type Handler = (request: Request, ctx: { params: Promise<{ id: string }> }) => Promise<Response>;
 let animate: Handler;
 let status: Handler;
+let file: Handler;
 let webhook: (request: Request) => Promise<Response>;
 let db: typeof import("@/server/db").db;
 let schema: typeof import("@/server/db/schema");
@@ -60,6 +61,7 @@ beforeAll(async () => {
   vi.resetModules();
   animate = (await import("../../media/[id]/animate/route")).POST as unknown as Handler;
   status = (await import("../../media/[id]/status/route")).GET as unknown as Handler;
+  file = (await import("../../media/[id]/route")).GET as unknown as Handler;
   webhook = (await import("./route")).POST;
   db = (await import("@/server/db")).db;
   schema = await import("@/server/db/schema");
@@ -74,13 +76,13 @@ afterAll(async () => {
   await rm(mediaDir, { recursive: true, force: true });
 });
 
-async function setup(handle: string, { verified = true, explicit = true, characterId = "mira" } = {}) {
+async function setup(handle: string, { verified = true, characterId = "mira" } = {}) {
   const { eq } = await import("drizzle-orm");
   const database = await db();
   const user = (await currentUser(new Request("http://localhost", { headers: { "x-dev-user": handle } })))!;
   await database
     .update(schema.users)
-    .set({ ageStatus: verified ? "approved" : "none", ageVerifiedAt: verified ? new Date() : null, settings: { explicit } })
+    .set({ ageStatus: verified ? "approved" : "none", ageVerifiedAt: verified ? new Date() : null, settings: {} })
     .where(eq(schema.users.id, user.id));
   await database.update(schema.creditBalances).set({ balance: 200 }).where(eq(schema.creditBalances.userId, user.id));
   const photo = await media.createMedia({ userId: user.id, kind: "image", purpose: "chat", characterId });
@@ -110,6 +112,13 @@ function deliver(body: unknown, token = "video-key") {
       body: JSON.stringify(body),
     }),
   );
+}
+
+// What a user says about their own age can put them on an explicit hold at any
+// time, a clip mid-render included.
+async function hold(userId: string) {
+  const { eq } = await import("drizzle-orm");
+  await (await db()).update(schema.users).set({ explicitHoldAt: new Date() }).where(eq(schema.users.id, userId));
 }
 
 async function check(handle: string, id: string) {
@@ -175,12 +184,34 @@ describe("video", () => {
     expect(await balanceOf(user.id)).toBe(200);
   });
 
-  it("blocks explicit frames for a user who hasn't opted in", async () => {
-    const { user, photo } = await setup("video-e", { explicit: false });
+  it("blocks explicit frames when the owner was put on an explicit hold while it rendered", async () => {
+    const { user, photo } = await setup("video-e");
     const { body } = await start("video-e", photo.id);
+    await hold(user.id);
     await deliver({ job_id: body.media.id, status: "succeeded", video_base64: MP4, frames: [FRAME] });
-    expect((await check("video-e", body.media.id)).status).toBe("blocked");
+    const { eq } = await import("drizzle-orm");
+    const [row] = await (await db()).select().from(schema.media).where(eq(schema.media.id, body.media.id));
+    expect(row.status).toBe("blocked");
     expect(await balanceOf(user.id)).toBe(200);
+  });
+
+  it("stores a confirmed adult's clip as explicit, so it locks like its source if the account is held", async () => {
+    const { user, photo } = await setup("video-lock");
+    const { body } = await start("video-lock", photo.id);
+    await deliver({ job_id: body.media.id, status: "succeeded", video_base64: MP4, frames: [FRAME] });
+    // The source photo wasn't marked explicit; the clip is, from its own frames.
+    const { eq } = await import("drizzle-orm");
+    const [row] = await (await db()).select().from(schema.media).where(eq(schema.media.id, body.media.id));
+    expect(row.moderation).toMatchObject({ explicit: true });
+    expect(await check("video-lock", body.media.id)).toMatchObject({ status: "ready", url: `/api/media/${body.media.id}` });
+
+    await hold(user.id);
+    expect(await check("video-lock", body.media.id)).toMatchObject({ status: "ready", url: null, locked: true });
+    const served = await file(new Request(`http://localhost/api/media/${body.media.id}`, { headers: { "x-dev-user": "video-lock" } }), params(body.media.id));
+    expect(served.status).toBe(404);
+    // Admins still review it.
+    const admin = await file(new Request(`http://localhost/api/media/${body.media.id}`, { headers: { "x-dev-user": "admin" } }), params(body.media.id));
+    expect(admin.status).toBe(200);
   });
 
   it("blocks, logs and refunds an anime clip the worker's age check refused", async () => {

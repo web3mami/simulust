@@ -1,12 +1,12 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
-import { currentUser } from "@/server/auth";
+import { currentUser, explicitAllowed } from "@/server/auth";
 import { notFound, route } from "@/server/http";
-import { canView, getMedia } from "@/server/media";
+import { canView, getMedia, isExplicitMedia } from "@/server/media";
 import { readLocalObject, signedUrl, usesS3 } from "@/server/storage";
 
 // Media is private: only its owner (or an admin) gets the bytes. <img> and
-// <video> tags authenticate with the privy-token cookie. Anything that isn't
+// <video> tags authenticate with the session cookie. Anything that isn't
 // visible is a plain 404, so ids can't be probed for existence.
 const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
@@ -18,6 +18,10 @@ const SECURITY_HEADERS = {
 // Short, private caching: a takedown should stop showing within minutes even in
 // the owner's own browser.
 const CACHE = "private, max-age=300";
+// A private cache belongs to a browser, not an account. Cookies (and the
+// development auth header) must partition it when that browser signs out or
+// switches accounts, including cached redirects to object storage.
+const VARY = "Cookie, X-Dev-User";
 
 function parseRange(header: string, size: number): { start: number; end: number } | "invalid" | null {
   const match = header.match(/^bytes=(\d*)-(\d*)$/);
@@ -44,11 +48,14 @@ export const GET = route(async (request: NextRequest, ctx: RouteContext<"/api/me
   const user = await currentUser(request);
   const row = await getMedia(id);
   if (!row || !canView(user, row) || row.status !== "ready" || !row.storageKey) throw notFound();
+  // Explicit media stays hidden while the owner can't see explicit content
+  // (an explicit hold, or no age confirmation). Admins review everything.
+  if (user && !user.isAdmin && !explicitAllowed(user) && (await isExplicitMedia(row))) throw notFound();
 
   if (usesS3()) {
     return new Response(null, {
       status: 302,
-      headers: { Location: await signedUrl(row.storageKey, 300), "Cache-Control": "private, max-age=240" },
+      headers: { Location: await signedUrl(row.storageKey, 300), "Cache-Control": "private, max-age=240", Vary: VARY },
     });
   }
 
@@ -59,6 +66,7 @@ export const GET = route(async (request: NextRequest, ctx: RouteContext<"/api/me
     ...SECURITY_HEADERS,
     "Content-Type": row.mimeType ?? object.contentType,
     "Cache-Control": CACHE,
+    Vary: VARY,
     "Accept-Ranges": "bytes",
   };
 

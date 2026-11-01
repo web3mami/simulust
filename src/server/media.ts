@@ -137,6 +137,26 @@ export function mediaUrl(id: string) {
   return `/api/media/${id}`;
 }
 
+// Media that may hold nudity: made while explicit content was allowed (the
+// photo routes and finished clips record moderation.explicit), or a clip of
+// such a photo. Only viewers allowed explicit content right now may see it,
+// even their own: not an account on an explicit hold, nor one that never
+// confirmed its age.
+export function isExplicit(row: Media, source?: Media | null) {
+  return row.moderation?.explicit === true || source?.moderation?.explicit === true;
+}
+
+export async function isExplicitMedia(row: Media) {
+  if (row.moderation?.explicit === true) return true;
+  if (!row.sourceMediaId) return false;
+  return isExplicit(row, await getMedia(row.sourceMediaId));
+}
+
+// What a viewer without explicit access gets for explicit media: no URL.
+export function lockedMediaDTO(row: Media): MediaDTO {
+  return { id: row.id, kind: row.kind, status: row.status, url: null, error: null, locked: true };
+}
+
 export function toMediaDTO(row: Media): MediaDTO {
   return {
     id: row.id,

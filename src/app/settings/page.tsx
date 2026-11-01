@@ -3,12 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
+import { AGE_DOT } from "@/components/account-menu";
 import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
 import {
   ACCOUNT_PAGE,
   AccountNav,
-  AgeStatusBadge,
   Notice,
   SectionCard,
   SignInPrompt,
@@ -17,20 +17,15 @@ import {
   solidDangerClass,
 } from "@/components/account/account-ui";
 import { DownloadIcon, TrashIcon } from "@/components/account/account-icons";
-import { SettingsIcon, ShieldIcon } from "@/components/icons";
+import { LockIcon, SettingsIcon, SignOutIcon, UserIcon } from "@/components/icons";
 import { PageHeader, buttonClass, cx, inputClass } from "@/components/ui";
 import { ApiError, useApi, useAuthHeaders } from "@/lib/api";
-import type { AgeStatus, Me } from "@/lib/api-types";
+import type { Me } from "@/lib/api-types";
+import { ageLine } from "@/lib/session";
 
-type SettingKey = "explicit" | "unpromptedMedia";
-
-// What the verification card says for each age-check state.
-const AGE_LINE: Record<AgeStatus, string> = {
-  none: "Explicit messages, photos, voice notes and video stay locked until you verify. It's a one-time ID check.",
-  pending: "We're waiting for the result of your check.",
-  approved: "You're verified. Explicit content is yours to turn on above.",
-  declined: "Your last check didn't go through. You can try again.",
-};
+// Everything explicit is open to every confirmed adult, so there's no switch
+// for it here: only what characters may send unasked.
+type SettingKey = "unpromptedMedia";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -129,48 +124,63 @@ export default function SettingsPage() {
       />
     );
   } else {
-    const verified = me.ageStatus === "approved";
+    const age = ageLine(me);
     content = (
       <div className="space-y-6">
+        {me.explicitHold ? (
+          <Notice tone="hold" role="status">
+            <span className="mb-1 block font-semibold">Paused while we review this account</span>
+            Simulust is only for adults. Something on this account said you might be under 18, so nude and explicit
+            content is off until our team has looked. Everything else here still works, and you can download your data
+            or delete the account below.
+          </Notice>
+        ) : null}
+
+        <SectionCard title="Account" icon={<UserIcon />}>
+          <dl className="divide-y divide-[var(--line)] border-y border-[var(--line)]">
+            <div className="flex items-center gap-3 py-3">
+              <div className="min-w-0 flex-1">
+                <dt className="text-xs text-[var(--muted)]">Username</dt>
+                <dd className="mt-1 break-all text-sm font-semibold text-[var(--ink)]">
+                  {me.username ? `@${me.username}` : session?.display}
+                </dd>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 py-3">
+              <div className="min-w-0 flex-1">
+                <dt className="text-xs text-[var(--muted)]">Age</dt>
+                <dd className="mt-1 inline-flex items-center gap-2 text-sm font-semibold text-[var(--ink)]">
+                  <span aria-hidden className={cx("h-2 w-2 rounded-full", AGE_DOT[age.tone])} />
+                  {age.label}
+                </dd>
+              </div>
+              {age.href ? (
+                <Link href={age.href} className={buttonClass("primary", "sm", "h-10 px-4")}>
+                  Confirm
+                </Link>
+              ) : null}
+            </div>
+          </dl>
+          <div className="mt-5 flex flex-wrap gap-3">
+            {me.username ? (
+              <Link href="/profile#password" className={buttonClass("secondary", "md", "whitespace-nowrap")}>
+                <LockIcon className="h-4 w-4" />
+                Change password
+              </Link>
+            ) : null}
+            <button type="button" className={buttonClass("ghost", "md", "whitespace-nowrap")} onClick={signOut}>
+              <SignOutIcon className="h-4 w-4" />
+              Log out
+            </button>
+          </div>
+        </SectionCard>
+
         <SectionCard
           title="Preferences"
-          description="What characters can write and send you."
+          description="What characters can send you."
           icon={<SettingsIcon />}
         >
           <div className="divide-y divide-[var(--line)] border-t border-[var(--line)]">
-            <Row
-              title="Explicit content"
-              body={
-                me.ageVerified ? (
-                  <>
-                    Lets characters write explicitly and send explicit photos, voice notes and video when you ask.
-                    Turning this on means you agree to us processing your chats, which may reveal details of your sex
-                    life, to run the service. Turn it off any time. See our{" "}
-                    <Link href="/privacy" className="!text-[var(--accent)] underline underline-offset-2">
-                      privacy policy
-                    </Link>
-                    .
-                  </>
-                ) : (
-                  <>
-                    Needs a one-time ID check first.{" "}
-                    <Link href="/verify" className="font-semibold !text-[var(--accent)] underline underline-offset-2">
-                      Verify your age
-                    </Link>
-                    .
-                  </>
-                )
-              }
-              control={
-                <Toggle
-                  label="Explicit content"
-                  on={optimistic.explicit ?? me.settings.explicit}
-                  disabled={!me.ageVerified || saving !== null}
-                  busy={saving === "explicit"}
-                  onChange={(value) => toggle("explicit", value)}
-                />
-              }
-            />
             <Row
               title="Photos and voice notes without asking"
               body="Characters can send a photo or voice note on their own now and then. Off means they only send media when you ask. Media still costs credits."
@@ -190,20 +200,6 @@ export default function SettingsPage() {
               {settingsError}
             </Notice>
           ) : null}
-        </SectionCard>
-
-        <SectionCard
-          title="Age verification"
-          description={AGE_LINE[me.ageStatus]}
-          icon={<ShieldIcon />}
-          action={<AgeStatusBadge status={me.ageStatus} />}
-        >
-          <Link
-            href="/verify"
-            className={buttonClass(verified || me.ageStatus === "pending" ? "secondary" : "primary", "md")}
-          >
-            {verified ? "View verification" : me.ageStatus === "pending" ? "Check status" : "Verify your age"}
-          </Link>
         </SectionCard>
 
         <SectionCard
@@ -270,7 +266,7 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <div className={ACCOUNT_PAGE}>
-        <PageHeader title="Settings" accent="Account" subtitle="Content preferences, age verification and your data." />
+        <PageHeader title="Settings" accent="Account" subtitle="Your account, what characters can send you, and your data." />
         <AccountNav className="mt-5" />
         <div className="mt-6">{content}</div>
       </div>
@@ -283,7 +279,7 @@ function Row({ title, body, control }: { title: string; body: ReactNode; control
     <div className="flex items-start gap-4 py-4 last:pb-0">
       <div className="min-w-0 flex-1">
         <p className="font-semibold text-[var(--ink)]">{title}</p>
-        <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">{body}</p>
+        <div className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">{body}</div>
       </div>
       <div className="shrink-0 pt-0.5">{control}</div>
     </div>

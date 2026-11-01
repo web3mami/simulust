@@ -25,6 +25,10 @@ export type Character = {
   // Made by the signed-in user (the API only ever returns official characters
   // and the user's own).
   own?: boolean;
+  // URL of the character's nude art. The API only includes it for a viewer who
+  // may see explicit content (signed in, a confirmed adult, no hold), and only
+  // while the art is servable. There's no switch: every such viewer gets it.
+  explicitImage?: string;
 };
 
 const CHARACTERS: Character[] = [
@@ -832,6 +836,14 @@ export const SEED_CHARACTERS: Character[] = CHARACTERS.map((person) => ({
   ...person,
   image: `/characters/${person.id}.jpg`,
 }));
+
+// Our own art in /public can be resized by next/image; generated media can't
+// (and nude art needs the viewer's login, so it never goes through the
+// optimizer). Cards pick nude art or the portrait with useCardArt
+// (src/components/home/card-art.tsx), which falls back if the nude art fails.
+export function isStaticArt(src: string) {
+  return /^\/(?:characters|hero|creator)\//.test(src);
+}
 
 export function laneOf(person: Character): Lane {
   if (person.lane === "girls" || person.lane === "anime" || person.lane === "guys") {

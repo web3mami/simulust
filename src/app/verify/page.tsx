@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
+import { AgeConfirmForm, EXPLICIT_UNLOCKS } from "@/components/age-gate";
 import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
 import {
@@ -13,9 +14,10 @@ import {
   SignInPrompt,
   SkeletonCard,
 } from "@/components/account/account-ui";
-import { CheckIcon, EyeOffIcon, IdCardIcon } from "@/components/account/account-icons";
+import { AlertIcon, CheckIcon, EyeOffIcon, IdCardIcon } from "@/components/account/account-icons";
+import { ShieldIcon } from "@/components/icons";
 import { Button, PageHeader, Panel, SectionTitle, buttonClass, cx } from "@/components/ui";
-import { useApi } from "@/lib/api";
+import { ApiError, useApi } from "@/lib/api";
 import type { AgeStatus, Me } from "@/lib/api-types";
 
 const STATUS: Record<AgeStatus, { label: string; detail: string }> = {
@@ -29,7 +31,7 @@ const STATUS: Record<AgeStatus, { label: string; detail: string }> = {
   },
   approved: {
     label: "Verified",
-    detail: "You're verified. Turn on explicit content in Settings whenever you want it.",
+    detail: "You're verified. Everything on Simulust is open to you.",
   },
   declined: {
     label: "Not approved",
@@ -73,6 +75,8 @@ export default function VerifyPage() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "We couldn't start verification. Try again.");
       setBusy(false);
+      // The account was put on hold since this page loaded: show the pause.
+      if (caught instanceof ApiError && caught.code === "explicit_hold") void refreshMe();
     }
   }
 
@@ -90,10 +94,22 @@ export default function VerifyPage() {
   }
 
   const mode = features?.ageVerification ?? null;
+  const gate = mode === "gate";
   const status = me ? STATUS[me.ageStatus] : null;
 
-  // How far along the three steps below this account is.
-  const stepsDone = me?.ageStatus === "approved" ? 3 : me?.ageStatus === "pending" ? 2 : 0;
+  // How far along the three steps below this account is. None, while held.
+  const stepsDone = me?.explicitHold
+    ? 0
+    : gate
+      ? me?.ageVerified
+        ? 3
+        : 0
+      : me?.ageStatus === "approved"
+        ? 3
+        : me?.ageStatus === "pending"
+          ? 2
+          : 0;
+  const steps = gate ? GATE_STEPS : STEPS;
 
   let card: ReactNode;
   if (suspended) {
@@ -107,12 +123,21 @@ export default function VerifyPage() {
   } else if (!me) {
     card = (
       <SignInPrompt
-        title="Sign in to verify your age."
-        body="It's a one-time check, and it unlocks explicit chat, photos, voice notes and video."
+        title={gate ? "Sign up to see everything." : "Sign in to verify your age."}
+        body={
+          gate
+            ? "Sign-up asks for your date of birth once, and everything opens up: nude art, explicit photos, the Video Studio and explicit chat."
+            : "It's a one-time check, and it unlocks explicit chat, photos, voice notes and video."
+        }
         onLogin={openLogin}
         onSignup={openSignup}
       />
     );
+  } else if (me.explicitHold) {
+    // The same pause in either mode: no check to start, nothing to unlock.
+    card = <HeldCard />;
+  } else if (gate) {
+    card = <GateCard me={me} />;
   } else {
     card = (
       <Panel className="overflow-hidden">
@@ -141,8 +166,8 @@ export default function VerifyPage() {
 
         <div className="border-t border-[var(--line)] bg-[var(--bg-2)]/60 p-5 sm:p-6">
           {me.ageStatus === "approved" ? (
-            <Link href="/settings" className={buttonClass("primary", "lg")}>
-              Go to settings
+            <Link href="/" className={buttonClass("primary", "lg")}>
+              Start exploring
             </Link>
           ) : mode === "veriff" ? (
             <Button size="lg" disabled={busy} onClick={start}>
@@ -193,9 +218,13 @@ export default function VerifyPage() {
     <AppShell>
       <div className={ACCOUNT_PAGE}>
         <PageHeader
-          accent="Verify"
+          accent={gate ? "Confirm" : "Verify"}
           title="your age"
-          subtitle="The law in many places now requires a real age check, not just a click, before a site can show explicit content. So before we unlock explicit chat, photos, voice notes and video, we ask for a one-time check."
+          subtitle={
+            gate
+              ? "Simulust is for adults. If your account hasn't confirmed a date of birth yet, we ask for it once, then forget it."
+              : "The law in many places now requires a real age check, not just a click, before a site can show explicit content. So before we unlock explicit chat, photos, voice notes and video, we ask for a one-time check."
+          }
         />
         <AccountNav className="mt-5" />
         <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -204,7 +233,7 @@ export default function VerifyPage() {
             <section>
               <SectionTitle accent="How">it works</SectionTitle>
               <ol className="mt-4 grid gap-3 sm:grid-cols-3">
-                {STEPS.map((step, index) => {
+                {steps.map((step, index) => {
                   const done = index < stepsDone;
                   return (
                     <li
@@ -232,14 +261,26 @@ export default function VerifyPage() {
             </section>
           </div>
           <SectionCard title="What we keep" icon={<EyeOffIcon />}>
-            <p className="text-sm leading-6 text-[var(--muted)]">
-              Only the result: passed or not, and when. We never store your ID, your selfie, your name or your date of
-              birth. Veriff handles those under its own privacy policy and retention rules. See our{" "}
-              <Link href="/privacy" className="!text-[var(--accent)] underline underline-offset-2">
-                privacy policy
-              </Link>{" "}
-              for details.
-            </p>
+            {gate ? (
+              <p className="text-sm leading-6 text-[var(--muted)]">
+                Only the time you confirmed. We check your date of birth and forget it: it&apos;s never stored or
+                logged. If you give a date under 18, we note that it happened (not the date) and pause explicit content
+                on the account. See our{" "}
+                <Link href="/privacy" className="!text-[var(--accent)] underline underline-offset-2">
+                  privacy policy
+                </Link>
+                .
+              </p>
+            ) : (
+              <p className="text-sm leading-6 text-[var(--muted)]">
+                Only the result: passed or not, and when. We never store your ID, your selfie, your name or your date of
+                birth. Veriff handles those under its own privacy policy and retention rules. See our{" "}
+                <Link href="/privacy" className="!text-[var(--accent)] underline underline-offset-2">
+                  privacy policy
+                </Link>{" "}
+                for details.
+              </p>
+            )}
           </SectionCard>
         </div>
       </div>
@@ -252,3 +293,103 @@ const STEPS = [
   "You take a photo of a government ID and a short selfie video. It takes about two minutes.",
   "Veriff tells us whether you passed, and you come back here.",
 ];
+
+const GATE_STEPS = [
+  "You give your date of birth and confirm you want adult content.",
+  "We check you're 18 or older, then forget the date.",
+  "Everything opens up: nude art, explicit photos, the Video Studio and explicit chat.",
+];
+
+// A held account (it said, somewhere, that it's under 18), in either mode:
+// explicit content is off for review, with no form, check or unlock offered.
+function HeldCard() {
+  return (
+    <Panel className="p-5 sm:p-6">
+      <div className="flex items-start gap-4">
+        <span
+          aria-hidden
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-sky-400/15 text-sky-200"
+        >
+          <AlertIcon className="h-6 w-6" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <h2 className="text-lg font-bold tracking-tight text-[var(--ink)]">Paused while we review this account</h2>
+            <AgeStatusBadge status="declined" label="On hold" />
+          </div>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--muted)]">
+            Simulust is only for adults. Something on this account said you might be under 18, so nude and explicit
+            content is off while our team reviews it. You can still use the rest of your account, download your data
+            or delete it in Settings.
+          </p>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+// The date-of-birth confirmation (AGE_VERIFICATION=gate), and what each
+// outcome looks like. Held accounts get HeldCard instead.
+function GateCard({ me }: { me: Me }) {
+  if (me.ageVerified) {
+    return (
+      <Panel className="overflow-hidden">
+        <div className="flex items-start gap-4 p-5 sm:p-6">
+          <span
+            aria-hidden
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-400/15 text-emerald-300"
+          >
+            <CheckIcon className="h-6 w-6" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <h2 className="text-lg font-bold tracking-tight text-[var(--ink)]">You&apos;re confirmed</h2>
+              <AgeStatusBadge status="approved" label="Adult" />
+            </div>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--muted)]">
+              Everything on Simulust is open to you: nude art, explicit photos, the Video Studio and explicit chat.
+            </p>
+          </div>
+        </div>
+        <div className="border-t border-[var(--line)] bg-[var(--bg-2)]/60 p-5 sm:p-6">
+          <Link href="/" className={buttonClass("primary", "lg")}>
+            Start exploring
+          </Link>
+        </div>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel className="overflow-hidden">
+      <div className="flex items-start gap-4 p-5 sm:p-6">
+        <span
+          aria-hidden
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent)]"
+        >
+          <ShieldIcon className="h-6 w-6" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <h2 className="text-lg font-bold tracking-tight text-[var(--ink)]">Confirm you&apos;re 18 or older</h2>
+            <AgeStatusBadge status="none" label="Not confirmed" />
+          </div>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--muted)]">
+            Your account doesn&apos;t have an age confirmation yet. Give your date of birth once, and everything opens up:
+          </p>
+          <ul className="mt-2 grid gap-1.5 text-sm text-[var(--ink)] sm:grid-cols-2">
+            {EXPLICIT_UNLOCKS.map((item) => (
+              <li key={item} className="flex items-start gap-2">
+                <CheckIcon className="mt-1 h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      <div className="border-t border-[var(--line)] bg-[var(--bg-2)]/60 p-5 sm:p-6">
+        <AgeConfirmForm />
+      </div>
+    </Panel>
+  );
+}

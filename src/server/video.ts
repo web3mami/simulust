@@ -11,6 +11,7 @@ import { readWorkerError, workerRefusalCategory, type ImageStyle } from "@/serve
 import { failMedia, getMedia, storeMedia } from "@/server/media";
 import { logModeration } from "@/server/safety/moderation";
 import { readLocalObject, signedUrl, usesS3 } from "@/server/storage";
+import { SOLO_ANCHOR } from "@/server/studio";
 import { COSTS } from "@/lib/pricing";
 
 // Image-to-video with Wan 2.2 TI2V-5B on our GPU worker (workers/media). The
@@ -27,7 +28,8 @@ import { COSTS } from "@/lib/pricing";
 //   when the body would be too big; the app then GETs the job. The webhook is
 //   the fast path; the status route polls when a job has been pending for more
 //   than two minutes. A job the worker's own checks refused (a source image or
-//   frames that look underage) ends "failed" with error "blocked: <reason>".
+//   frames that look underage, or that show a second person) ends "failed"
+//   with error "blocked: <reason>"; workerRefusalCategory files the reason.
 
 export const VIDEO_SECONDS = 5;
 const POLL_AFTER_MS = 2 * 60_000;
@@ -74,7 +76,9 @@ function authHeaders(): Record<string, string> {
   return env.videoApiKey ? { Authorization: `Bearer ${env.videoApiKey}` } : {};
 }
 
-const DEFAULT_MOTION = "subtle natural movement: slow breathing, a soft smile, hair moving gently, a slight turn of the head";
+// Ends in the one-person anchor a written motion gets (soloMotionPrompt), so
+// the default clip keeps to the one person in the photo too.
+const DEFAULT_MOTION = `subtle natural movement: slow breathing, a soft smile, hair moving gently, a slight turn of the head, ${SOLO_ANCHOR}`;
 const SAME_ADULT = "The same adult from the photo, same face and body, natural realistic motion, steady camera, consistent lighting.";
 
 export function videoPrompt(request?: string) {
@@ -258,7 +262,8 @@ async function flagSource(row: Media, reason: string) {
 // the motion at submission, a verdict on what the user wrote, so it records
 // what matched like our own text checks do and holds up account deletion the
 // same way. "render" is a finished job its tagger refused, a verdict on the
-// source photo or the clip (see flagSource).
+// source photo or the clip: an apparent minor (see flagSource) or a second
+// person (one_person, which blocks only the clip).
 export async function blockVideo(row: Media, reason: string, stage: "prompt" | "render" = "prompt") {
   const category = workerRefusalCategory(reason);
   const motion = stage === "prompt" && category !== "worker_refused" ? writtenMotion(row) : null;
@@ -292,6 +297,9 @@ function frameType(base64: string) {
   return "image/jpeg";
 }
 
+// Whether the clip's owner may see explicit content now. Decided when the job
+// finishes, not when it started, so an account put on an explicit hold while
+// its clip rendered gets no nudity through.
 async function ownerAllowsExplicit(userId: string | null) {
   if (!userId) return false;
   const database = await db();
@@ -324,11 +332,12 @@ export async function completeVideoJob(row: Media, result: VideoJobResult): Prom
     bytes: new Uint8Array(Buffer.from(frame, "base64")),
     mimeType: frameType(frame),
   }));
+  const allowExplicit = await ownerAllowsExplicit(claimed.userId);
   const moderation = await moderateFrames(frames, {
     userId: claimed.userId,
     targetType: "video",
     targetId: claimed.id,
-    allowExplicit: await ownerAllowsExplicit(claimed.userId),
+    allowExplicit,
   });
   if (!moderation.ok) {
     const blocked = !moderation.unavailable;
@@ -343,9 +352,13 @@ export async function completeVideoJob(row: Media, result: VideoJobResult): Prom
     if (claimed.userId) await refund(claimed.userId, claimed.creditsSpent || COSTS.video, claimed.id);
     return failed;
   }
+  // Recorded like the photo routes do: a clip whose frames were let through
+  // with nudity allowed is explicit in its own right, whatever its source was,
+  // so the file, status and list routes lock it from a held viewer.
   return storeMedia(claimed, video, mimeType, {
     provider: "wan2.2-ti2v-5b",
     frames: frames.length,
+    explicit: allowExplicit,
     categories: [],
     result: moderation.raw,
   });
@@ -374,8 +387,13 @@ export async function refreshVideo(row: Media): Promise<Media> {
     if (age < MOCK_READY_AFTER_MS || isProduction) return row;
     const claimed = await claim(row.id);
     if (!claimed) return (await getMedia(row.id)) ?? row;
-    // Our own placeholder clip, development only: nothing to moderate.
-    return storeMedia(claimed, placeholderVideo(), "video/mp4", { provider: "mock", skipped: "development placeholder" });
+    // Our own placeholder clip, development only: nothing to moderate. Marked
+    // like a real clip would be, so locking works the same in development.
+    return storeMedia(claimed, placeholderVideo(), "video/mp4", {
+      provider: "mock",
+      skipped: "development placeholder",
+      explicit: await ownerAllowsExplicit(claimed.userId),
+    });
   }
 
   // Never reached the worker (crash between charging and submitting).

@@ -1,4 +1,14 @@
+import { generateKeyPairSync } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// The wallet JWT key, written on one line with "\n" escapes as hosts store it.
+const P256_KEY = generateKeyPairSync("ec", { namedCurve: "P-256" })
+  .privateKey.export({ type: "pkcs8", format: "pem" })
+  .toString()
+  .trim()
+  .replace(/\n/g, "\\n");
+const ADMIN_1 = "6f1c2a9e-3b4d-4e5f-8a7b-0c1d2e3f4a5b";
+const ADMIN_2 = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 
 const MAINNET_GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
 const DEVNET_GENESIS = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
@@ -9,7 +19,8 @@ const PRODUCTION: Record<string, string> = {
   APP_URL: "https://simulust.example",
   DATABASE_URL: "postgres://u:p@db.example:6543/postgres",
   NEXT_PUBLIC_PRIVY_APP_ID: "privy-app",
-  ADMIN_PRIVY_IDS: "did:privy:admin1, did:privy:admin2",
+  AUTH_JWT_PRIVATE_KEY: P256_KEY,
+  ADMIN_USER_IDS: `${ADMIN_1}, ${ADMIN_2.toUpperCase()}`,
   LLM_BASE_URL: "https://llm.example/v1",
   LLM_API_KEY: "llm",
   MODERATION_BASE_URL: "https://moderation.example/v1",
@@ -80,16 +91,50 @@ describe("assertProductionConfig", () => {
     }
   });
 
-  it("requires at least one admin, named by Privy user id", async () => {
+  it("requires at least one admin, named by account id", async () => {
     for (const ids of ["", " , ,"]) {
-      expect(await refusal({ ADMIN_PRIVY_IDS: ids })).toBe("Refusing to start in production: missing ADMIN_PRIVY_IDS.");
+      expect(await refusal({ ADMIN_USER_IDS: ids })).toBe("Refusing to start in production: missing ADMIN_USER_IDS.");
     }
-    // An email or a dev handle never matches a login, so it's no admin either.
-    for (const ids of ["ops@simulust.example", "did:privy:admin1,admin"]) {
-      expect(await refusal({ ADMIN_PRIVY_IDS: ids })).toContain("ADMIN_PRIVY_IDS must be Privy user ids (did:privy:...)");
+    // A username could be taken by anyone at sign-up, so only ids count.
+    for (const ids of ["admin", `${ADMIN_1},kate`, "did:privy:admin1", "ops@simulust.example"]) {
+      expect(await refusal({ ADMIN_USER_IDS: ids })).toContain("ADMIN_USER_IDS must be account ids (UUIDs), not usernames");
     }
     const { env } = await loadEnv();
-    expect(env.adminPrivyIds).toEqual(["did:privy:admin1", "did:privy:admin2"]);
+    expect(env.adminUserIds).toEqual([ADMIN_1, ADMIN_2]);
+  });
+
+  it("requires the wallet JWT key, as a P-256 key, when Privy is set", async () => {
+    expect(await refusal({ AUTH_JWT_PRIVATE_KEY: "" })).toBe("Refusing to start in production: missing AUTH_JWT_PRIVATE_KEY.");
+    const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const p384 = generateKeyPairSync("ec", { namedCurve: "P-384" }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    for (const key of ["not a key", rsa, p384]) {
+      expect(await refusal({ AUTH_JWT_PRIVATE_KEY: key })).toContain("AUTH_JWT_PRIVATE_KEY must be an EC P-256 private key");
+    }
+    // With real newlines as well as "\n" escapes.
+    expect(await refusal({ AUTH_JWT_PRIVATE_KEY: P256_KEY.replace(/\\n/g, "\n") })).toBeNull();
+    // Without Privy there's no wallet to sign for; the missing app id is what's reported.
+    expect(await refusal({ NEXT_PUBLIC_PRIVY_APP_ID: "", AUTH_JWT_PRIVATE_KEY: "" })).not.toContain("AUTH_JWT_PRIVATE_KEY");
+  });
+
+  it("no longer reads the old Privy login settings", async () => {
+    const { env } = await loadEnv({ PRIVY_VERIFICATION_KEY: "-----BEGIN PUBLIC KEY-----", ADMIN_PRIVY_IDS: "did:privy:x" });
+    expect(env).not.toHaveProperty("privyVerificationKey");
+    expect(env).not.toHaveProperty("adminPrivyIds");
+    expect(await refusal({ ADMIN_PRIVY_IDS: "did:privy:x" })).toBeNull();
+  });
+
+  it("requires Veriff only when explicit content needs an ID check", async () => {
+    const noVeriff = { VERIFF_API_KEY: "", VERIFF_SHARED_SECRET: "" };
+    // The default age gate asks for a date of birth, with no provider.
+    expect(await refusal(noVeriff)).toBeNull();
+    expect(await refusal({ ...noVeriff, AGE_VERIFICATION: "gate" })).toBeNull();
+    const partial: Record<string, string>[] = [noVeriff, { VERIFF_API_KEY: "" }, { VERIFF_SHARED_SECRET: "" }];
+    for (const missing of partial) {
+      expect(await refusal({ ...missing, AGE_VERIFICATION: "id" })).toBe(
+        "Refusing to start in production: missing VERIFF_API_KEY / VERIFF_SHARED_SECRET.",
+      );
+    }
+    expect(await refusal({ AGE_VERIFICATION: "id" })).toBeNull();
   });
 
   it("requires sanctions screening", async () => {
@@ -163,6 +208,45 @@ describe("SOLANA_CLUSTER", () => {
         'SOLANA_CLUSTER must be "mainnet" or "devnet", not "mainnet-beta".',
       );
     }
+  });
+});
+
+describe("AGE_VERIFICATION", () => {
+  it("defaults to the date-of-birth gate", async () => {
+    for (const NODE_ENV of ["development", "production"]) {
+      const { env } = await loadEnv({ NODE_ENV, AGE_VERIFICATION: "" });
+      expect(env.ageVerification).toBe("gate");
+    }
+    expect((await loadEnv({ AGE_VERIFICATION: "id" })).env.ageVerification).toBe("id");
+  });
+
+  it("stops the boot on anything but gate or id", async () => {
+    for (const value of ["veriff", "ID", "off"]) {
+      await expect(loadEnv({ NODE_ENV: "development", AGE_VERIFICATION: value })).rejects.toThrow(
+        `AGE_VERIFICATION must be "gate" or "id", not "${value}".`,
+      );
+    }
+  });
+});
+
+describe("region blocking", () => {
+  it("reads BLOCKED_REGIONS as country-region codes, blocking none by default", async () => {
+    expect((await loadEnv({ NODE_ENV: "development", BLOCKED_REGIONS: "" })).env.blockedRegions).toEqual([]);
+    const { env } = await loadEnv({ NODE_ENV: "development", BLOCKED_REGIONS: " us-tx, US-UT ,,GB-SCT" });
+    expect(env.blockedRegions).toEqual(["US-TX", "US-UT", "GB-SCT"]);
+  });
+
+  it("stops the boot on a code that could never match", async () => {
+    for (const value of ["TX", "US-TX,UT", "USA-TX", "US_TX", "US-"]) {
+      await expect(loadEnv({ NODE_ENV: "development", BLOCKED_REGIONS: value })).rejects.toThrow(
+        /BLOCKED_REGIONS entries must look like "US-TX"/,
+      );
+    }
+  });
+
+  it("reads the region from the platform's header, Vercel's by default", async () => {
+    expect((await loadEnv({ GEO_REGION_HEADER: "" })).env.geoRegionHeader).toBe("x-vercel-ip-country-region");
+    expect((await loadEnv({ GEO_REGION_HEADER: "CF-Region-Code" })).env.geoRegionHeader).toBe("cf-region-code");
   });
 });
 

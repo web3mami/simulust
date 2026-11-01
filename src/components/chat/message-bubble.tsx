@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { Avatar } from "@/components/chat/avatar";
 import motion from "@/components/chat/chat-motion.module.css";
 import { clockTime, type GroupPosition } from "@/components/chat/format";
-import { MediaView, PendingCard, Rich, TypingDots } from "@/components/chat/message-parts";
+import { MediaView, PendingCard, Rich, TypingDots, type MediaLock } from "@/components/chat/message-parts";
 import { CoinIcon, MicIcon, PlayIcon } from "@/components/icons";
 import { cx } from "@/components/ui";
 import type { CharacterDTO, MediaDTO, MessageDTO } from "@/lib/api-types";
@@ -129,6 +129,7 @@ export function MessageBubble({
   onVoice,
   onVideo,
   onOpenPhoto,
+  lock,
 }: {
   message: MessageDTO;
   person: CharacterDTO;
@@ -145,6 +146,8 @@ export function MessageBubble({
   onVoice: (message: MessageDTO) => void;
   onVideo: (message: MessageDTO, image: MediaDTO) => void;
   onOpenPhoto: (media: MediaDTO) => void;
+  // What a locked 18+ photo or video says: paused (on hold) or confirm your age.
+  lock?: MediaLock;
 }) {
   const name = person.name;
   const mine = message.role === "user";
@@ -240,6 +243,7 @@ export function MessageBubble({
           stalled={stalled.has(item.id)}
           poster={item.kind === "video" ? (image?.url ?? undefined) : undefined}
           onOpen={onOpenPhoto}
+          lock={lock}
         />
       ))}
     </Row>

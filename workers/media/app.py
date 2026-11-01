@@ -41,7 +41,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from models import FAKE, BadRequest, Busy, ImageModels, VideoModel, decode_image, encode_image
-from safety import screen_negative, screen_prompt, tagger_from_env
+from safety import label_refusal, screen_negative, screen_prompt, tagger_from_env
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 log = logging.getLogger("media-worker")
@@ -71,10 +71,10 @@ images = ImageModels()
 video = VideoModel()
 tagger = tagger_from_env()
 # The tagger checks every image, video source and clip whatever style the caller
-# declares: a leaked key could declare the unchecked one, and gets its results
-# straight back, past the app's Hive checks. With real models the worker refuses
-# all work while it is off; only the CPU contract check (FAKE_MODELS=1) runs
-# without it.
+# declares, for an apparent minor and for a second person: a leaked key could
+# declare the unchecked one, and gets its results straight back, past the app's
+# Hive checks. With real models the worker refuses all work while it is off;
+# only the CPU contract check (FAKE_MODELS=1) runs without it.
 CHECKED = tagger is not None or FAKE
 if not CHECKED:
     log.error("ANIME_TAGGER=0 with real models: every image and video is refused")
@@ -86,7 +86,7 @@ async def lifespan(_app: FastAPI):
         threading.Thread(target=_run_videos, daemon=True, name="video-jobs").start()
     if tagger is not None:
         try:
-            tagger.flagged([])  # Loads it, so the first request doesn't wait for the download.
+            tagger.load()  # So the first request doesn't wait for the download.
         except Exception:  # noqa: BLE001 - requests retry the load and fail closed meanwhile
             log.exception("The tagger didn't load")
     for name in [part.strip() for part in os.environ.get("PRELOAD", "").split(",") if part.strip()]:
@@ -112,14 +112,14 @@ def error(status: int, message: str, **extra) -> JSONResponse:
     return JSONResponse({"error": message, **extra}, status_code=status)
 
 
-def apparent_minor(stills: List[Image.Image]) -> Optional[str]:
-    """Why an image or clip is refused, or None. Raises when the tagger can't run."""
+def output_refusal(stills: List[Image.Image]) -> Optional[str]:
+    """Why an image or clip is refused, or None: "apparent minor: <tags>" or
+    "people:<tags>". Raises when the tagger can't run."""
     if tagger is None:  # FAKE_MODELS=1 only (see CHECKED).
         return None
     if not stills:
         raise RuntimeError("no images to check")
-    flagged = tagger.flagged(stills)
-    return f"apparent minor: {', '.join(flagged)}" if flagged else None
+    return tagger.refusal(stills)
 
 
 class ImageRequest(BaseModel):
@@ -130,6 +130,8 @@ class ImageRequest(BaseModel):
     seed: Optional[int] = Field(default=None, ge=0, le=2**31 - 1)
     lora: Optional[str] = Field(default=None, max_length=64)
     style: str = Field(pattern="^(realistic|anime)$")
+    # No field turns the age or people check off: a leaked key would send it.
+    # Unknown fields (an old "one_person": false) are ignored.
 
 
 @app.post("/v1/images", dependencies=[Depends(require_key)])
@@ -165,7 +167,7 @@ def create_image(body: ImageRequest):
         return error(500, "generation failed")
 
     try:
-        reason = apparent_minor([image])
+        reason = output_refusal([image])
     except Exception:  # noqa: BLE001 - an unchecked image never leaves
         log.exception("Tagger failed")
         return error(503, "safety check unavailable")
@@ -189,6 +191,7 @@ class VideoRequest(BaseModel):
     seconds: int = Field(default=5, ge=1, le=8)
     # The source image's declared style, for the logs: every clip is checked.
     style: Optional[str] = Field(default=None, pattern="^(realistic|anime)$")
+    # As for images, nothing here turns a check off.
     callback_url: Optional[str] = Field(default=None, max_length=2000)
 
 
@@ -256,6 +259,7 @@ def health():
     info["anime_tagger"] = tagger is not None
     info["loaded"] = images.loaded() + (["video"] if video.loaded() else [])
     info["lora"] = images.lora_support()
+    info["video_lora"] = video.lora_info()
     try:
         import torch
 
@@ -306,14 +310,14 @@ def _purge() -> None:
 
 
 def _video_refusal(stills: List[Image.Image], checked: str) -> Optional[str]:
-    """apparent_minor for a video job, which fails when the tagger can't run.
-    The reason says what was checked ("source" or "frames"), since only a hit on
-    the source photo says anything about the photo the app keeps."""
+    """output_refusal for a video job, which fails when the tagger can't run.
+    The reason says what was checked ("source" or "frames"), since only a minor
+    hit on the source photo says anything about the photo the app keeps."""
     try:
-        reason = apparent_minor(stills)
+        reason = output_refusal(stills)
     except Exception as failure:  # noqa: BLE001 - an unchecked clip never succeeds
         raise RuntimeError("safety check unavailable") from failure
-    return reason.replace("apparent minor:", f"apparent minor ({checked}):", 1) if reason else None
+    return label_refusal(reason, checked) if reason else None
 
 
 def _run_videos() -> None:
@@ -338,9 +342,10 @@ def _run_videos() -> None:
                     seconds=job.request.seconds,
                     seed=random.randint(0, 2**31 - 1),
                 )
-                # A clip can drift younger than its source. These are the stills
-                # the app sends to Hive.
-                reason = _video_refusal([Image.open(io.BytesIO(frame)) for frame in result.frames], "frames")
+                # A clip can drift younger than its source, or bring someone
+                # in. These are the stills the app sends to Hive.
+                stills = [Image.open(io.BytesIO(frame)) for frame in result.frames]
+                reason = _video_refusal(stills, "frames")
                 if reason is None:
                     job.video_base64 = base64.b64encode(result.mp4).decode()
                     job.frames = [base64.b64encode(frame).decode() for frame in result.frames]

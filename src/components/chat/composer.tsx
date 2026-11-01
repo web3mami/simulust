@@ -3,21 +3,33 @@
 import Link from "next/link";
 import { useEffect, useState, type ReactNode, type RefObject } from "react";
 import motion from "@/components/chat/chat-motion.module.css";
-import { PHOTO_IDEAS } from "@/components/chat/format";
+import { explicitPhotoIdeas, PHOTO_IDEAS } from "@/components/chat/format";
 import { CameraIcon, CoinIcon, LockIcon, SendIcon, SparkIcon } from "@/components/icons";
 import { Chip, cx } from "@/components/ui";
 
 export type PhotoAction =
-  // `fromDraft`: the hint is what they typed, so the draft is used up.
-  | { kind: "ask"; onPick: (hint: string | null, fromDraft?: boolean) => void; busy: boolean; disabled: boolean; cost: number }
-  // Photos unlock after age verification.
-  | { kind: "locked" };
+  // A confirmed adult: the photo menu and the 18+ quick actions, uncensored by
+  // default. The server checks every request either way.
+  | {
+      kind: "ask";
+      // `fromDraft`: the hint is what they typed, so the draft is used up.
+      onPick: (hint: string | null, fromDraft?: boolean) => void;
+      busy: boolean;
+      disabled: boolean;
+      cost: number;
+    }
+  // An older account that hasn't confirmed its age yet: one link to do it.
+  | { kind: "confirm" }
+  // An account on hold (it said it was under 18): photos are paused while we
+  // review it, with nothing to click.
+  | { kind: "paused" };
 
 // The bottom of the conversation: what went wrong (if anything), a row of quick
 // actions (a photo, reply starters) with your credits, then the message box.
 // Enter sends, Shift+Enter starts a new line.
 export function Composer({
   name,
+  gender,
   draft,
   onDraft,
   onSend,
@@ -32,6 +44,9 @@ export function Composer({
   credits,
 }: {
   name: string;
+  // The character's, so the 18+ quick actions are worded for who they are
+  // (a man is shirtless, not topless).
+  gender?: string | null;
   draft: string;
   onDraft: (value: string) => void;
   onSend: () => void;
@@ -139,21 +154,49 @@ export function Composer({
                   </span>
                 )}
               </button>
-            ) : photo?.kind === "locked" ? (
+            ) : null}
+            {photo?.kind === "confirm" ? (
               <Link
                 href="/verify"
                 className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--surface)] px-3.5 text-sm font-semibold text-[var(--muted)] transition-colors hover:text-[var(--ink)]"
-                title="Photos unlock after age verification"
+                title="Photos open up once you confirm your age"
               >
                 <LockIcon className="h-4 w-4" />
-                Unlock photos
+                Confirm your age
               </Link>
+            ) : photo?.kind === "paused" ? (
+              <span
+                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border border-[var(--line)] px-3.5 text-sm font-medium text-[var(--muted)]"
+                title="Photos are paused while we review this account"
+              >
+                <LockIcon className="h-4 w-4" />
+                Photos paused
+              </span>
             ) : null}
             {starters.map((text) => (
               <Chip key={text} onClick={() => onStarter(text)}>
                 {text}
               </Chip>
             ))}
+            {photo?.kind === "ask"
+              ? explicitPhotoIdeas(gender).map((idea) => (
+                  <button
+                    key={idea.label}
+                    type="button"
+                    onClick={() => pick(idea.hint)}
+                    disabled={photo.disabled}
+                    title={`${idea.label} · ${photo.cost} credits`}
+                    aria-label={`${idea.label}, ${photo.cost} credits`}
+                    className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border border-[var(--accent)]/30 bg-[var(--surface)] pl-3.5 pr-3 text-sm font-medium text-[var(--ink)] transition-colors hover:border-[var(--accent)]/60 hover:bg-[var(--accent-soft)] disabled:opacity-60"
+                  >
+                    {idea.label}
+                    <span className="inline-flex items-center gap-0.5 text-xs text-[var(--premium)]" aria-hidden>
+                      <CoinIcon className="h-3.5 w-3.5" />
+                      {photo.cost}
+                    </span>
+                  </button>
+                ))
+              : null}
           </div>
           {credits ? (
             <Link

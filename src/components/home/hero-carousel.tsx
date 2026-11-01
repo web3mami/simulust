@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 import { useSession } from "@/components/auth-gate";
 import { ChatIcon, ChevronLeftIcon, ChevronRightIcon, CoinIcon, PlusIcon } from "@/components/icons";
 import { PremiumIcon } from "@/components/premium-icon";
+import { useCardArt } from "@/components/home/card-art";
 import { Badge, ButtonLink, cx, isStaticArt } from "@/components/ui";
 import { FREE, MEMBERSHIP, PRODUCTS, formatUsd } from "@/lib/pricing";
 import type { Character, Lane } from "@/lib/characters";
@@ -70,23 +71,28 @@ function Shade() {
 const KEN_BURNS = "motion-safe:transition-transform motion-safe:duration-[7000ms] motion-safe:ease-out";
 
 function CharacterSlide({ person, active, first, media }: { person: Character; active: boolean; first: boolean; media: boolean }) {
-  const optimised = person.image ? isStaticArt(person.image) : false;
+  // Confirmed adults get the nude art up front (the API only sends it to them),
+  // and the regular portrait if it won't load; the soft backdrop behind it
+  // stays the regular portrait.
+  const { art, onError } = useCardArt(person);
   return (
     <>
       <div className="absolute inset-0" style={{ background: person.color }} />
-      {media && person.image ? (
+      {media && art ? (
         <>
           {/* A 64px copy stretched and blurred makes the backdrop: about 1KB. */}
-          <Image
-            src={person.image}
-            alt=""
-            aria-hidden
-            fill
-            sizes="64px"
-            unoptimized={!optimised}
-            loading={first ? "eager" : "lazy"}
-            className="scale-125 object-cover object-top opacity-60 blur-2xl"
-          />
+          {person.image ? (
+            <Image
+              src={person.image}
+              alt=""
+              aria-hidden
+              fill
+              sizes="64px"
+              unoptimized={!isStaticArt(person.image)}
+              loading={first ? "eager" : "lazy"}
+              className="scale-125 object-cover object-top opacity-60 blur-2xl"
+            />
+          ) : null}
           <div
             className={cx(
               "absolute inset-y-0 right-0 w-[64%] [mask-image:linear-gradient(to_right,transparent,#000_30%)] sm:w-[50%] lg:w-[46%] lg:[mask-image:linear-gradient(to_right,transparent,#000_25%,#000_88%,transparent)]",
@@ -94,11 +100,14 @@ function CharacterSlide({ person, active, first, media }: { person: Character; a
             )}
           >
             <Image
-              src={person.image}
+              key={art}
+              src={art}
               alt=""
               fill
               sizes="(min-width: 1024px) 640px, (min-width: 640px) 50vw, 64vw"
-              unoptimized={!optimised}
+              // Never through the image optimizer: nude art needs the viewer's login.
+              unoptimized={!isStaticArt(art)}
+              onError={onError}
               loading={first ? "eager" : "lazy"}
               fetchPriority={first ? "high" : "auto"}
               className={cx("object-cover object-[center_18%]", KEN_BURNS, active ? "scale-[1.06]" : "scale-100")}

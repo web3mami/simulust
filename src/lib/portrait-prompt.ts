@@ -149,6 +149,28 @@ const ANIME_MINOR_NEGATIVE = ["petite child", "small child", "female child", "ma
 
 const REAL_PERSON_NEGATIVE = ["celebrity", "famous person", "real person likeness"];
 
+// Every image shows one person. Kept to group and extra-person words: the
+// worker refuses a negative prompt that names an adult (woman, man, an age),
+// since negating those pulls the models younger.
+export const OTHER_PEOPLE_NEGATIVE = [
+  "multiple people",
+  "two people",
+  "second person",
+  "extra person",
+  "other people",
+  "couple",
+  "group",
+  "crowd",
+  "bystanders",
+  "partner",
+  "another person's hands",
+  "multiple girls",
+  "multiple boys",
+  "2girls",
+  "2boys",
+  "3girls",
+];
+
 const NUDITY_NEGATIVE = ["nude", "nudity", "naked", "topless", "nipples", "genitals", "sex", "explicit"];
 
 function list(...parts: (string | null | undefined | false)[]) {
@@ -163,6 +185,7 @@ function negative(style: "realistic" | "anime", allowNudity: boolean) {
     ...(allowNudity ? [] : NUDITY_NEGATIVE),
     ...MINOR_NEGATIVE,
     ...REAL_PERSON_NEGATIVE,
+    ...OTHER_PEOPLE_NEGATIVE,
     ...QUALITY_NEGATIVE,
   );
 }
@@ -212,7 +235,7 @@ function realisticAnchors(person: string, age: number, ethnicity: string) {
 }
 
 // Creator portraits are the character's public face, so they stay clothed.
-// Lingerie only shows up for verified users who turned explicit content on.
+// Lingerie only shows up for confirmed adults (explicitAllowed).
 export function portraitPrompt(choice: PortraitRequest, options: { suggestive?: boolean } = {}): ImagePrompt {
   const person = choice.section === "girls" ? "woman" : "man";
   const hair = `${choice.hair.toLowerCase()} ${choice.hairStyle.toLowerCase()} hair`;

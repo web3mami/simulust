@@ -1,14 +1,12 @@
 "use client";
 
-import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AVATAR_FILL } from "@/components/account-menu";
 import { AppShell } from "@/components/app-shell";
 import { useSession } from "@/components/auth-gate";
 import {
   ACCOUNT_PAGE,
   AccountNav,
-  AgeStatusBadge,
   Notice,
   SectionCard,
   SignInPrompt,
@@ -16,13 +14,12 @@ import {
   fieldHint,
   fieldLabel,
 } from "@/components/account/account-ui";
-import { PencilIcon } from "@/components/account/account-icons";
-import { ChevronRightIcon, CoinIcon, SignOutIcon, UserIcon } from "@/components/icons";
-import { PremiumIcon } from "@/components/premium-icon";
+import { CheckIcon, PencilIcon } from "@/components/account/account-icons";
+import { LockIcon } from "@/components/icons";
 import { Button, Chip, PageHeader, Panel, buttonClass, cx, inputClass } from "@/components/ui";
 import { ApiError, useApi } from "@/lib/api";
-import type { Me } from "@/lib/api-types";
-import type { Session } from "@/lib/session";
+import { PASSWORD_MAX, authErrorMessage, passwordProblem } from "@/lib/session";
+import { AccountCard } from "@/app/profile/account-card";
 
 type ProfileGender = "Woman" | "Man" | "Non-binary";
 type ProfileLane = "Girls" | "Anime" | "Guys";
@@ -40,13 +37,6 @@ const GENDERS: ProfileGender[] = ["Woman", "Man", "Non-binary"];
 const LANES: ProfileLane[] = ["Girls", "Anime", "Guys"];
 const NAME_MAX = 40;
 const BIO_MAX = 500;
-
-const PROVIDER_LABEL = {
-  google: "Google",
-  twitter: "X",
-  email: "Email",
-  wallet: "Wallet",
-} as const;
 
 type Form = Omit<Profile, "updatedAt">;
 
@@ -314,7 +304,10 @@ export default function ProfilePage() {
             </div>
           </Panel>
         ) : null}
-        <AccountCard session={session} me={me} onSignOut={signOut} />
+        <div className="space-y-6">
+          <AccountCard session={session} me={me} onSignOut={signOut} />
+          {me?.username ? <PasswordCard /> : null}
+        </div>
       </div>
     );
   }
@@ -346,92 +339,136 @@ function Avatar({ initial, size }: { initial: string; size: "md" | "lg" }) {
   );
 }
 
-// Sign-in method, credits, plan and age check, with links to change each.
-function AccountCard({ session, me, onSignOut }: { session: Session; me: Me | null; onSignOut: () => void }) {
-  return (
-    <SectionCard title="Account" icon={<UserIcon />}>
-      <dl className="divide-y divide-[var(--line)] border-y border-[var(--line)]">
-        <AccountRow label="Signed in with">
-          <span className="font-semibold text-[var(--ink)]">{PROVIDER_LABEL[session.provider]}</span>
-          <span className="block break-all text-xs text-[var(--muted)]">{session.detail}</span>
-        </AccountRow>
-        {me ? (
-          <>
-            <AccountRow label="Credits" href="/premium" linkLabel="Buy credits" premium>
-              <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--ink)]">
-                <CoinIcon className="h-4 w-4 text-[var(--premium)]" />
-                {me.balance.toLocaleString()}
-              </span>
-            </AccountRow>
-            <AccountRow label="Plan" href="/premium" linkLabel={me.isMember ? "Manage" : "Go Premium"} premium>
-              {me.isMember ? (
-                <>
-                  <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--premium)]">
-                    <PremiumIcon className="h-4 w-4" />
-                    Premium
-                  </span>
-                  {me.memberUntil ? (
-                    <span className="block text-xs text-[var(--muted)]">
-                      Until {new Date(me.memberUntil).toLocaleDateString(undefined, { dateStyle: "medium" })}
-                    </span>
-                  ) : null}
-                </>
-              ) : (
-                <span className="font-semibold text-[var(--ink)]">Free</span>
-              )}
-            </AccountRow>
-            <AccountRow label="Age check" href="/verify" linkLabel={me.ageVerified ? "Details" : "Verify"}>
-              <AgeStatusBadge status={me.ageStatus} />
-            </AccountRow>
-          </>
-        ) : null}
-      </dl>
-      <div className="mt-5 flex flex-wrap gap-3">
-        <Link href="/settings" className={buttonClass("secondary", "md", "flex-1")}>
-          Settings
-        </Link>
-        <Button variant="ghost" className="flex-1" onClick={onSignOut}>
-          <SignOutIcon className="h-4 w-4" />
-          Log out
-        </Button>
-      </div>
-    </SectionCard>
-  );
-}
+// Current and new password (POST /api/me/password). There's no email on the
+// account, so the current password (or the recovery code, when logged out) is
+// the only proof it's you.
+function PasswordCard() {
+  const id = useId();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<{ field: "current" | "next" | "form"; message: string } | null>(null);
+  const [done, setDone] = useState(false);
+  const currentField = useRef<HTMLInputElement>(null);
 
-function AccountRow({
-  label,
-  href,
-  linkLabel,
-  premium,
-  children,
-}: {
-  label: string;
-  href?: string;
-  linkLabel?: string;
-  // Credits and Premium links take the amber Premium colour.
-  premium?: boolean;
-  children: ReactNode;
-}) {
+  // Settings links here as /profile#password; the card only exists once the
+  // profile has loaded, too late for the browser's own jump.
+  useEffect(() => {
+    if (window.location.hash !== "#password") return;
+    document.getElementById("password")?.scrollIntoView({ block: "start" });
+    currentField.current?.focus({ preventScroll: true });
+  }, []);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (busy) return;
+    setDone(false);
+    if (!current) return setError({ field: "current", message: "Enter your current password." });
+    const problem = passwordProblem(next);
+    if (problem) return setError({ field: "next", message: problem });
+    if (next === current) return setError({ field: "next", message: "Choose a password you're not using now." });
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/me/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: current, newPassword: next }),
+        cache: "no-store",
+      });
+      if (response.ok) {
+        setCurrent("");
+        setNext("");
+        setShow(false);
+        setDone(true);
+      } else {
+        const body = (await response.json().catch(() => null)) as { error?: string; code?: string } | null;
+        const message = authErrorMessage("password", response.status, body);
+        const field =
+          response.status === 401 || body?.code === "wrong_password"
+            ? "current"
+            : body?.code === "weak_password"
+              ? "next"
+              : "form";
+        setError({ field, message });
+      }
+    } catch {
+      setError({ field: "form", message: authErrorMessage("password", null, null) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const fieldClass = cx(inputClass, "mt-2 h-11 aria-[invalid=true]:border-red-400");
   return (
-    <div className="flex items-center gap-3 py-3">
-      <div className="min-w-0 flex-1">
-        <dt className="text-xs text-[var(--muted)]">{label}</dt>
-        <dd className="mt-1 text-sm">{children}</dd>
-      </div>
-      {href && linkLabel ? (
-        <Link
-          href={href}
-          className={cx(
-            "inline-flex h-10 shrink-0 items-center gap-0.5 rounded-full pl-3 pr-2 text-sm font-semibold",
-            premium ? "!text-[var(--premium)] hover:bg-[var(--premium)]/10" : "!text-[var(--accent)] hover:bg-[var(--accent-soft)]",
-          )}
-        >
-          {linkLabel}
-          <ChevronRightIcon className="h-4 w-4" />
-        </Link>
-      ) : null}
-    </div>
+    <SectionCard
+      title={<span id="password" className="scroll-mt-24">Change password</span>}
+      description="Your recovery code still works after a change."
+      icon={<LockIcon />}
+    >
+      <form className="space-y-4" onSubmit={submit} noValidate>
+        <label className="block" htmlFor={`${id}-current`}>
+          <span className={fieldLabel}>Current password</span>
+          <input
+            ref={currentField}
+            id={`${id}-current`}
+            type={show ? "text" : "password"}
+            value={current}
+            onChange={(event) => setCurrent(event.target.value)}
+            autoComplete="current-password"
+            maxLength={PASSWORD_MAX}
+            disabled={busy}
+            aria-invalid={error?.field === "current" || undefined}
+            aria-describedby={error?.field === "current" ? `${id}-error` : undefined}
+            className={fieldClass}
+          />
+        </label>
+        <label className="block" htmlFor={`${id}-next`}>
+          <span className={fieldLabel}>New password</span>
+          <input
+            id={`${id}-next`}
+            type={show ? "text" : "password"}
+            value={next}
+            onChange={(event) => setNext(event.target.value)}
+            autoComplete="new-password"
+            maxLength={PASSWORD_MAX}
+            disabled={busy}
+            aria-invalid={error?.field === "next" || undefined}
+            aria-describedby={error?.field === "next" ? `${id}-error` : `${id}-hint`}
+            className={fieldClass}
+          />
+          <span id={`${id}-hint`} className={fieldHint}>
+            At least 8 characters.
+          </span>
+        </label>
+        <label className="flex min-h-10 cursor-pointer items-center gap-3 text-sm text-[var(--muted)]">
+          <input
+            type="checkbox"
+            checked={show}
+            onChange={(event) => setShow(event.target.checked)}
+            className="h-4 w-4 shrink-0 accent-[var(--accent)]"
+          />
+          Show passwords
+        </label>
+        {error ? (
+          <Notice role="alert">
+            <span id={`${id}-error`}>{error.message}</span>
+          </Notice>
+        ) : null}
+        {done ? (
+          <Notice role="status" tone="info">
+            <span className="inline-flex items-center gap-2">
+              <CheckIcon className="h-4 w-4 text-emerald-300" />
+              Password changed.
+            </span>
+          </Notice>
+        ) : null}
+        <button type="submit" disabled={busy} className={buttonClass("primary", "md", "w-full sm:w-auto")}>
+          {busy ? "Changing…" : "Change password"}
+        </button>
+      </form>
+    </SectionCard>
   );
 }
 

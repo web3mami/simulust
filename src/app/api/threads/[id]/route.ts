@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { requireUser } from "@/server/auth";
+import { explicitAllowed, requireUser } from "@/server/auth";
 import { HttpError, route } from "@/server/http";
 import { loadMessages, requireThread, toThreadDTO } from "@/server/threads";
 
@@ -14,6 +14,6 @@ export const GET = route(async (request: NextRequest, ctx: RouteContext<"/api/th
     throw new HttpError(400, "before must be an ISO date.", "invalid");
   }
 
-  const page = await loadMessages(thread.id, before);
+  const page = await loadMessages(thread.id, before, explicitAllowed(user));
   return Response.json({ thread: toThreadDTO(thread, character), ...page });
 });

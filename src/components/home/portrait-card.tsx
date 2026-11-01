@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { ChatIcon } from "@/components/icons";
+import { useCardArt } from "@/components/home/card-art";
 import { CARD_SIZES, buttonClass, cx, isStaticArt } from "@/components/ui";
 import type { Character } from "@/lib/characters";
 
@@ -11,7 +12,7 @@ import type { Character } from "@/lib/characters";
 export const ROW_SIZES = "(min-width: 1024px) 224px, (min-width: 640px) 208px, 42vw";
 export const ROW_ITEM = "w-[42vw] max-w-56 shrink-0 snap-start sm:w-52 lg:w-56";
 
-type Person = Pick<Character, "id" | "name" | "age" | "image" | "color" | "role" | "line"> & { body?: string };
+type Person = Pick<Character, "id" | "name" | "age" | "image" | "explicitImage" | "color" | "role" | "line"> & { body?: string };
 
 // The browse card for these screens. The portrait fills it and fades in over
 // the character's own colour, name and age sit on a fade at the bottom, and on
@@ -38,6 +39,9 @@ export function PortraitCard({
   eager?: boolean;
 }) {
   const [loaded, setLoaded] = useState(false);
+  // Nude art when the server sent it (confirmed adults only), the regular
+  // portrait otherwise or if the nude art won't load.
+  const { art, onError } = useCardArt(person);
   return (
     <Link
       href={href}
@@ -47,16 +51,19 @@ export function PortraitCard({
       )}
       style={{ background: person.color }}
     >
-      {person.image ? (
+      {art ? (
         <Image
-          src={person.image}
+          key={art}
+          src={art}
           alt=""
           fill
           sizes={sizes}
           loading={eager ? "eager" : "lazy"}
           fetchPriority={eager ? "high" : "auto"}
-          unoptimized={!isStaticArt(person.image)}
+          // Never through the image optimizer: nude art needs the viewer's login.
+          unoptimized={!isStaticArt(art)}
           onLoad={() => setLoaded(true)}
+          onError={onError}
           className={cx(
             "object-cover object-top transition-[opacity,transform] duration-500 group-hover:scale-[1.04] motion-reduce:transition-none",
             loaded ? "opacity-100" : "opacity-0",

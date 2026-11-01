@@ -43,19 +43,25 @@ async function make(
     purpose = kind === "video" ? "video" : "chat",
     state = "ready",
     characterId = "mira",
+    sourceMediaId,
+    explicit,
   }: {
     kind?: "image" | "video" | "audio";
-    purpose?: "chat" | "video" | "voice" | "portrait";
+    purpose?: "chat" | "video" | "voice" | "portrait" | "studio";
     state?: "ready" | "pending" | "blocked" | "failed";
     characterId?: string;
+    // The photo a clip was animated from.
+    sourceMediaId?: string;
+    // Moderation let nudity through (what the photo and studio routes record).
+    explicit?: boolean;
   } = {},
 ) {
   const user = await userFor(handle);
-  const threadId = crypto.randomUUID();
-  let row = await media.createMedia({ userId: user.id, characterId, threadId, kind, purpose });
+  const threadId = purpose === "studio" ? null : crypto.randomUUID();
+  let row = await media.createMedia({ userId: user.id, characterId, threadId, kind, purpose, sourceMediaId });
   if (state !== "pending") {
     const mime = kind === "video" ? "video/mp4" : kind === "audio" ? "audio/mpeg" : "image/png";
-    row = await media.storeMedia(row, BYTES, mime);
+    row = await media.storeMedia(row, BYTES, mime, explicit === undefined ? undefined : { explicit });
   }
   if (state === "blocked" || state === "failed") await media.failMedia(row.id, state, "Removed");
   const { eq } = await import("drizzle-orm");
@@ -101,6 +107,7 @@ describe("GET /api/media", () => {
       characterId: "mira",
       threadId: video.threadId,
       createdAt: new Date(T0 + 2 * 60_000).toISOString(),
+      origin: "chat",
     });
 
     // Someone else sees none of it.
@@ -144,10 +151,58 @@ describe("GET /api/media", () => {
     expect(last.body.hasMore).toBe(false);
   });
 
+  it("lists studio keyframes and the clips made from them", async () => {
+    const chatPhoto = await make("gallery-g", 1);
+    const chatClip = await make("gallery-g", 2, { kind: "video", sourceMediaId: chatPhoto.id });
+    const frame = await make("gallery-g", 3, { purpose: "studio" });
+    const clip = await make("gallery-g", 4, { kind: "video", sourceMediaId: frame.id });
+    // A keyframe that never finished isn't shown.
+    await make("gallery-g", 5, { purpose: "studio", state: "failed" });
+
+    const all = await list("gallery-g");
+    expect(all.body.media.map((item) => [item.id, item.origin])).toEqual([
+      [clip.id, "studio"],
+      [frame.id, "studio"],
+      [chatClip.id, "chat"],
+      [chatPhoto.id, "chat"],
+    ]);
+    expect(all.body.media.find((item) => item.id === frame.id)).toMatchObject({ kind: "image", threadId: null });
+
+    expect((await list("gallery-g", "?origin=studio")).body.media.map((item) => item.id)).toEqual([clip.id, frame.id]);
+    expect((await list("gallery-g", "?origin=studio&kind=video")).body.media.map((item) => item.id)).toEqual([clip.id]);
+    expect((await list("gallery-g", "?origin=chat")).body.media.map((item) => item.id)).toEqual([chatClip.id, chatPhoto.id]);
+  });
+
+  it("only lists nude media to someone who may see it now", async () => {
+    const { eq } = await import("drizzle-orm");
+    const tame = await make("gallery-h", 1, { explicit: false });
+    const nude = await make("gallery-h", 2, { purpose: "studio", explicit: true });
+    const nudeClip = await make("gallery-h", 3, { kind: "video", sourceMediaId: nude.id });
+    const chatNude = await make("gallery-h", 4, { explicit: true });
+
+    // An account without an age confirmation (an older or dev account): only
+    // the tame photo.
+    expect((await list("gallery-h")).body.media.map((item) => item.id)).toEqual([tame.id]);
+    expect((await list("gallery-h", "?origin=studio")).body.media).toEqual([]);
+
+    // A confirmed adult sees everything; there's no switch to turn on.
+    const user = await userFor("gallery-h");
+    const database = await db();
+    await database.update(schema.users).set({ ageAttestedAt: new Date(), settings: {} }).where(eq(schema.users.id, user.id));
+    expect((await list("gallery-h")).body.media.map((item) => item.id)).toEqual([chatNude.id, nudeClip.id, nude.id, tame.id]);
+
+    // An explicit hold hides it again, with no trace of what's hidden.
+    await database.update(schema.users).set({ explicitHoldAt: new Date() }).where(eq(schema.users.id, user.id));
+    const held = await list("gallery-h");
+    expect(held.body.media.map((item) => item.id)).toEqual([tame.id]);
+    expect(held.body.hasMore).toBe(false);
+  });
+
   it("rejects a bad query", async () => {
     expect((await list("gallery-e", "?limit=61")).status).toBe(400);
     expect((await list("gallery-e", "?limit=0")).status).toBe(400);
     expect((await list("gallery-e", "?kind=audio")).status).toBe(400);
+    expect((await list("gallery-e", "?origin=portrait")).status).toBe(400);
     const bad = await list("gallery-e", "?before=yesterday");
     expect(bad.status).toBe(400);
     expect(bad.body.error).toBe("before: before must be an ISO date.");
