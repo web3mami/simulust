@@ -302,6 +302,10 @@ class VideoModel:
         # failing every clip later.
         self.lora = parse_lora_source(VIDEO_LORA) if VIDEO_LORA else None
 
+    @property
+    def name(self) -> str:
+        return VIDEO_REPO
+
     def loaded(self) -> bool:
         return self._pipe is not None
 

@@ -200,9 +200,10 @@ describe("video", () => {
     const { body } = await start("video-lock", photo.id);
     await deliver({ job_id: body.media.id, status: "succeeded", video_base64: MP4, frames: [FRAME] });
     // The source photo wasn't marked explicit; the clip is, from its own frames.
+    // A worker that doesn't say which model rendered it runs Wan 2.2.
     const { eq } = await import("drizzle-orm");
     const [row] = await (await db()).select().from(schema.media).where(eq(schema.media.id, body.media.id));
-    expect(row.moderation).toMatchObject({ explicit: true });
+    expect(row.moderation).toMatchObject({ explicit: true, provider: "wan2.2-ti2v-5b" });
     expect(await check("video-lock", body.media.id)).toMatchObject({ status: "ready", url: `/api/media/${body.media.id}` });
 
     await hold(user.id);
@@ -232,6 +233,32 @@ describe("video", () => {
     expect(events).toMatchObject([
       { userId: user.id, category: "minor", action: "blocked", details: { reason: "apparent minor: loli:0.91, child:0.40" } },
     ]);
+  });
+
+  it("records the hosted model a worker rendered with", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { photo } = await setup("video-venice");
+    const { body } = await start("video-venice", photo.id);
+    const model = "venice:wan-2-7-enhanced-image-to-video";
+    await deliver({ job_id: body.media.id, status: "succeeded", model, video_base64: MP4, frames: [FRAME] });
+    const [row] = await (await db()).select().from(schema.media).where(eq(schema.media.id, body.media.id));
+    expect(row).toMatchObject({ status: "ready", moderation: { provider: model } });
+  });
+
+  it("refunds a clip Venice refused without logging it as a block", async () => {
+    // A refusal by Venice or its model's provider (an IP check, say) is no
+    // verdict of ours on the user, unlike the worker's own "blocked:".
+    const { eq } = await import("drizzle-orm");
+    const { user, photo } = await setup("video-venice-refused");
+    const { body } = await start("video-venice-refused", photo.id);
+    await deliver({ job_id: body.media.id, status: "failed", error: "Venice refused the clip: content policy" });
+    expect(await check("video-venice-refused", body.media.id)).toMatchObject({ status: "failed" });
+    expect(await balanceOf(user.id)).toBe(200);
+    const events = await (await db())
+      .select()
+      .from(schema.moderationEvents)
+      .where(eq(schema.moderationEvents.targetId, body.media.id));
+    expect(events).toEqual([]);
   });
 
   it("refunds a job the worker reports as failed", async () => {

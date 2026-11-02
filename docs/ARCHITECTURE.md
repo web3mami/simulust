@@ -158,5 +158,7 @@ the worker refuses all work while its tagger is off.
 
 `workers/media`: HTTP worker for images (Z-Image-Turbo / Chroma for realistic,
 Animagine XL 4.0 for anime, per-character LoRA) and video (Wan 2.2 TI2V-5B
-image-to-video). Must run on an adult-tolerant GPU host.
+image-to-video, or with `VIDEO_BACKEND=venice` Wan 2.7 Enhanced on Venice, the
+worker still screening the prompt and tagging the source and frames). Must run
+on an adult-tolerant GPU host.
 `workers/tts`: Kokoro-FastAPI (OpenAI-compatible `/v1/audio/speech`).

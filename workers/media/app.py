@@ -7,7 +7,7 @@ HTTP contract (the app side lives in src/server/images.ts and src/server/video.t
   POST /v1/videos      { job_id, image (base64), image_mime_type, prompt, negative_prompt,
                          seconds, style?, callback_url } -> 202 { job_id, status }
                        | 422 {"error":"blocked","reason"}
-  GET  /v1/videos/{id} -> { job_id, status, video_base64?, mime_type?, frames?, error? }
+  GET  /v1/videos/{id} -> { job_id, status, model?, video_base64?, mime_type?, frames?, error? }
                        A job the worker's safety checks refused ends "failed" with
                        error "blocked: <reason>".
   GET  /health         -> { ok, anime_tagger, ... } (no auth, for load balancers)
@@ -15,7 +15,9 @@ HTTP contract (the app side lives in src/server/images.ts and src/server/video.t
 Every /v1 call needs "Authorization: Bearer $API_KEY". When a video job ends, the
 worker POSTs the GET body to callback_url with the same header, leaving out
 video_base64 and frames when it is over CALLBACK_MAX_BYTES; the app then GETs the
-job. Untested on a GPU; see README.md.
+job. VIDEO_BACKEND=venice renders clips on Venice's hosted models instead of
+the local Wan 2.2 (venice.py); the checks around the render are the same.
+Untested on a GPU; see README.md.
 """
 
 from __future__ import annotations
@@ -52,6 +54,9 @@ if not API_KEY and os.environ.get("ALLOW_NO_AUTH") != "1":
 
 ENABLE_IMAGES = os.environ.get("ENABLE_IMAGES", "1") == "1"
 ENABLE_VIDEO = os.environ.get("ENABLE_VIDEO", "1") == "1"
+VIDEO_BACKEND = os.environ.get("VIDEO_BACKEND", "local")  # local | venice
+if VIDEO_BACKEND not in ("local", "venice"):
+    raise SystemExit(f"VIDEO_BACKEND must be local or venice, not {VIDEO_BACKEND!r}.")
 OUTPUT_FORMAT = os.environ.get("OUTPUT_FORMAT", "jpeg")  # jpeg | png | webp
 # Callbacks only go to the app. Set this to APP_URL so a stolen key can't make
 # the worker POST to arbitrary hosts.
@@ -68,7 +73,15 @@ CALLBACK_MAX_BYTES = int(os.environ.get("CALLBACK_MAX_BYTES", "4000000"))
 MIME = {"jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
 
 images = ImageModels()
-video = VideoModel()
+if VIDEO_BACKEND == "venice":
+    from venice import VeniceVideo
+
+    video = VeniceVideo()
+    # A hosted clip mostly waits on Venice, so a few render at once.
+    VIDEO_THREADS = int(os.environ.get("VENICE_CONCURRENCY", "4"))
+else:
+    video = VideoModel()
+    VIDEO_THREADS = 1  # The GPU renders one clip at a time.
 tagger = tagger_from_env()
 # The tagger checks every image, video source and clip whatever style the caller
 # declares, for an apparent minor and for a second person: a leaked key could
@@ -83,7 +96,8 @@ if not CHECKED:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     if ENABLE_VIDEO:
-        threading.Thread(target=_run_videos, daemon=True, name="video-jobs").start()
+        for index in range(max(1, VIDEO_THREADS)):
+            threading.Thread(target=_run_videos, daemon=True, name=f"video-jobs-{index}").start()
     if tagger is not None:
         try:
             tagger.load()  # So the first request doesn't wait for the download.
@@ -207,7 +221,7 @@ class Job:
     error: Optional[str] = None
 
     def payload(self, media: bool = True) -> dict:
-        body: dict = {"job_id": self.job_id, "status": self.status}
+        body: dict = {"job_id": self.job_id, "status": self.status, "model": video.name}
         if self.status == "succeeded" and media:
             body.update(video_base64=self.video_base64, mime_type="video/mp4", frames=self.frames)
         if self.error:
@@ -257,6 +271,7 @@ def get_video(job_id: str):
 def health():
     info: dict = {"ok": True, "fake": FAKE, "images": ENABLE_IMAGES, "video": ENABLE_VIDEO, "queued": work.qsize()}
     info["anime_tagger"] = tagger is not None
+    info["video_model"] = video.name
     info["loaded"] = images.loaded() + (["video"] if video.loaded() else [])
     info["lora"] = images.lora_support()
     info["video_lora"] = video.lora_info()
