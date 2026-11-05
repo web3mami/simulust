@@ -14,15 +14,20 @@ import { readLocalObject, signedUrl, usesS3 } from "@/server/storage";
 import { SOLO_ANCHOR } from "@/server/studio";
 import { COSTS } from "@/lib/pricing";
 
-// Image-to-video with Wan 2.2 TI2V-5B on our GPU worker (workers/media). The
-// source is always an image that already passed moderation, so identity and
-// apparent age carry over; the frames are checked again anyway.
+// Image-to-video through our GPU worker (workers/media): Wan 2.2 TI2V-5B on its
+// own GPU, or, with VIDEO_BACKEND=venice there, a hosted model on Venice (Wan
+// 2.7 Enhanced by default) that the worker calls itself. Either way the worker
+// screens the prompt and tags the source and the frames, and the app runs Hive
+// on the frames, so this side doesn't change. The source is always an image
+// that already passed moderation, so identity and apparent age carry over; the
+// frames are checked again anyway.
 //
 // Worker contract:
 //   POST {VIDEO_API_URL}/v1/videos (Bearer VIDEO_API_KEY)
 //     { job_id, image: base64, image_mime_type, prompt, negative_prompt, seconds, style, callback_url }
 //     -> 202 { job_id, status }, or 422 { error: "blocked", reason } when its prompt checks refuse
-//   GET {VIDEO_API_URL}/v1/videos/{job_id} -> VideoJobResult, 404 if unknown
+//   GET {VIDEO_API_URL}/v1/videos/{job_id} -> VideoJobResult (with the model that
+//     rendered it), 404 if unknown
 //   When done the worker POSTs the same VideoJobResult to callback_url with
 //   "Authorization: Bearer VIDEO_API_KEY", leaving out video_base64 and frames
 //   when the body would be too big; the app then GETs the job. The webhook is
@@ -42,6 +47,7 @@ const CLAIM_TTL = "5 minutes";
 export const videoJobResult = z.object({
   job_id: z.string().min(1).max(200),
   status: z.enum(["queued", "running", "succeeded", "failed"]),
+  model: z.string().max(200).optional(),
   video_base64: z.string().optional(),
   mime_type: z.string().max(40).optional(),
   frames: z.array(z.string()).max(32).optional(),
@@ -359,7 +365,8 @@ export async function completeVideoJob(row: Media, result: VideoJobResult): Prom
   // with nudity allowed is explicit in its own right, whatever its source was,
   // so the file, status and list routes lock it from a held viewer.
   return storeMedia(claimed, video, mimeType, {
-    provider: "wan2.2-ti2v-5b",
+    // A worker from before it reported its model renders only Wan 2.2.
+    provider: result.model ?? "wan2.2-ti2v-5b",
     frames: frames.length,
     explicit: allowExplicit,
     categories: [],

@@ -1,7 +1,9 @@
 # Simulust media worker
 
 A small HTTP server that runs our image and video models on one GPU. The app
-calls it for creator portraits, chat photos and image-to-video clips.
+calls it for creator portraits, chat photos and image-to-video clips. Clips can
+instead render on Venice's hosted models, with the worker still checking every
+one (see [Video on Venice](#video-on-venice)).
 
 > **Untested on a GPU.** This is a reference implementation written against the
 > current diffusers APIs and model cards. The Python files compile and the
@@ -18,6 +20,7 @@ calls it for creator portraits, chat photos and image-to-video clips.
 | Realistic images (alternative) | [`lodestones/Chroma1-HD`](https://huggingface.co/lodestones/Chroma1-HD) | Apache-2.0 | 8.9B, 40 steps, supports negative prompts. `REALISTIC_MODEL=chroma`. |
 | Anime images | [`cagliostrolab/animagine-xl-4.0`](https://huggingface.co/cagliostrolab/animagine-xl-4.0) | CreativeML Open RAIL++-M | SDXL. Its use restrictions forbid illegal and exploitative content, which our policy already does. Prompts go through [compel](https://github.com/damian0815/compel), because SDXL's text encoders read only 77 tokens and the app's anime negative prompt is about twice that. |
 | Video | [`Wan-AI/Wan2.2-TI2V-5B-Diffusers`](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers) | Apache-2.0 | Image-to-video through `WanImageToVideoPipeline`, 720p, 24 fps, 5 s clips. |
+| Video, hosted (`VIDEO_BACKEND=venice`) | `wan-2-7-enhanced-image-to-video` on [Venice](https://docs.venice.ai/api-reference/endpoint/video/queue) | Venice's terms (see below) | No public weights. 720p, 5 s clips, re-encoded here as H.264 without audio. |
 | Age and people check | [`SmilingWolf/wd-eva02-large-tagger-v3`](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3) | Apache-2.0 | ONNX tagger trained on drawn images. Refuses every image, video source image and clip whose sampled frames it tags as childlike or as showing more than one person, whatever style the request declares, before anything leaves the worker. |
 
 Avoid NoobAI and FLUX.1/FLUX.2 [dev] (non-commercial licences) and Wan 2.2 A14B
@@ -67,11 +70,13 @@ negative prompt; `503` means the queue is full or the age check is off.
 
 ```json
 { "job_id": "...", "status": "queued | running | succeeded | failed",
+  "model": "Wan-AI/Wan2.2-TI2V-5B-Diffusers | venice:<model id>",
   "video_base64": "...", "mime_type": "video/mp4",
   "frames": ["<base64 jpeg>", "..."], "error": "..." }
 ```
 
-`frames` are six evenly spaced stills (first and last included). The app runs
+`model` is what rendered the clip; the app records it with the clip. `frames`
+are six evenly spaced stills per 5 seconds (first and last included). The app runs
 image moderation on every one before it stores the clip. The worker first runs
 the tagger on the source image (before rendering) and on the same stills; if it
 flags any, the job ends `failed` with `error: "blocked: apparent minor (source|frames): <tags>"`
@@ -91,7 +96,7 @@ fails, the app polls this route once a job has been pending for two minutes.
 ### `GET /health`
 
 No auth. Reports which models are loaded, the queue length, GPU memory,
-`anime_tagger` (whether the age check is on), `lora` (for each loaded image
+`video_model` (what renders clips), `anime_tagger` (whether the age check is on), `lora` (for each loaded image
 model, whether it can load LoRAs) and `video_lora` (the video LoRA's source and
 scale, or `null`).
 
@@ -143,6 +148,11 @@ app's `npm test` runs them too (`src/server/worker-safety.test.ts`), so CI does.
 | `PRELOAD` | empty | Comma list of `realistic,anime,video` to load at start instead of on first request. |
 | `LORA_DIR`, `LORA_SCALE` | `/loras`, `0.9` | LoRAs live at `$LORA_DIR/<style>/<lora_id>.safetensors`. |
 | `VIDEO_LORA`, `VIDEO_LORA_SCALE` | empty, `1.0` | An optional LoRA for the video model, on for every clip: a local `.safetensors` path, or a Hugging Face file as `owner/repo@revision/file.safetensors`. See [Explicit motion](#explicit-motion). |
+| `VIDEO_BACKEND` | `local` | `local` renders clips with Wan 2.2 on this GPU; `venice` sends them to Venice. See [Video on Venice](#video-on-venice). |
+| `VENICE_API_KEY` | (required for `venice`) | A Venice API key. It pays for every clip, so keep it on the worker only. |
+| `VENICE_VIDEO_MODEL`, `VENICE_VIDEO_RESOLUTION` | `wan-2-7-enhanced-image-to-video`, `720p` | Venice's model id and resolution. The worker sends no aspect ratio, which Wan 2.7 Enhanced takes from the photo, and always 5 s; try another model on a few clips before switching to it. |
+| `VENICE_CONCURRENCY` | `4` | Clips rendering on Venice at once. Each mostly waits on Venice. |
+| `VENICE_TIMEOUT_SECONDS`, `VENICE_POLL_SECONDS` | `900`, `5` | How long a clip may take (the app refunds after 20 minutes anyway) and how often to ask. |
 | `VIDEO_STEPS` | `40` | Wan's card uses 50. Fewer is faster and a little softer. |
 | `VIDEO_MAX_AREA` | `901120` | 704 x 1280 pixels (720p). Lower it for speed. |
 | `OUTPUT_FORMAT` | `jpeg` | `jpeg`, `png` or `webp`. |
@@ -156,6 +166,7 @@ app's `npm test` runs them too (`src/server/worker-safety.test.ts`), so CI does.
 
 - **One 24 GB card** (RTX 4090 or similar; a 48 GB L40S is more comfortable) runs everything with `OFFLOAD=1` and, as a planning figure, 64 GB of system RAM, although the tagger may leave Wan too little (see below). Images take seconds. Wan 2.2 TI2V-5B renders a 5 s 720p clip in under 9 minutes on one RTX 4090 according to its model card, and it needs at least 24 GB with offloading.
 - While a video renders, the GPU is busy: image requests wait up to `IMAGE_WAIT_SECONDS`, then the app refunds. **In production run two workers**: one with `ENABLE_VIDEO=0` behind `IMAGE_API_URL`, one with `ENABLE_IMAGES=0` behind `VIDEO_API_URL`.
+- **With `VIDEO_BACKEND=venice`** the video worker renders nothing itself, so it needs no large GPU: only the tagger runs there, and `ANIME_TAGGER_DEVICE=cpu` is fine for six stills a clip.
 - **Wan 2.2 A14B** (the larger image-to-video model) needs about 80 GB (A100/H100 80 GB). Not worth it for 5 s companion clips.
 - **The tagger's GPU memory.** onnxruntime runs the tagger on the GPU and keeps the memory it takes for the life of the process: about 2 to 3 GB by our estimate (1.2 GB of weights plus onnxruntime's memory pool), not measured. Every worker loads it at start, the video worker included, and Wan needs about 24 GB with offloading, so a 24 GB video worker may run out of memory mid-clip. Give the video worker a 32 GB or larger card (RTX 5090, L40S), or set `ANIME_TAGGER_DEVICE=cpu` there (slower tagging, a few seconds per clip's stills), or render a few clips on the 24 GB one before launch.
 - Disk: about 60 GB of weights. Keep `/models` on a persistent volume or every restart downloads them again.
@@ -286,19 +297,62 @@ that appears, clothes that change, a face that drifts. So:
   today; models that make audio (Seedance, Wan 3.0) refuse prompts that trip
   their IP checks.
 
-## Hosted video models
+## Video on Venice
 
-Not wired in: this worker's Wan 2.2 TI2V-5B is the only video model the app
-uses. These notes are for adding a hosted provider. Model ids are as that
-provider lists them; many cinematic models are SFW-only and quietly dress the
-subject back up.
+[Venice](https://docs.venice.ai) hosts the video models that have no public
+weights, and `VIDEO_BACKEND=venice` makes the worker render clips there
+(`venice.py`) instead of with Wan 2.2. The app doesn't change: it still calls
+this worker, and everything around the render stays here, in the same order:
+
+1. The worker screens the motion and the negative prompt, and refuses a source
+   photo the tagger flags, before anything is sent to Venice.
+2. It sends Venice the photo (as JPEG), the motion and the negative prompt,
+   with `MINOR_NEGATIVE` first as always, queues a 5 s 720p clip, and asks
+   about every 5 seconds until it's done.
+3. It downloads the clip, then asks Venice to delete its copy
+   (`/video/complete`, and `DELETE` on a `download_url`).
+4. It re-encodes the clip as H.264 without audio or metadata: Venice may send
+   H.265, which most browsers won't play, and nothing checks a clip's sound,
+   so none leaves the worker.
+5. The tagger checks stills from the first frame to the last for an apparent
+   minor or a second person, and the app runs Hive on the same stills before it
+   stores the clip, exactly as for a local clip.
+
+A refusal by Venice or by the company that runs the model (a `422`, usually an
+IP or likeness check) fails the job as `Venice refused the clip: ...`. The app
+refunds it like a failed render and logs no moderation event, since it's no
+verdict of ours. Run the worker with `FAKE_MODELS=1 VIDEO_BACKEND=venice` to
+check the contract without a key; `test_venice.py` covers the rest with fakes.
+
+**Before going live with it:**
+
+- **Venice's terms.** Its [terms of service](https://venice.ai/legal/tos)
+  license the API for "personal, non-commercial use" (7.1) and have you warrant
+  that what you submit isn't pornographic (10.9). Get written confirmation or a
+  commercial agreement from Venice that covers an adult service for paying
+  users before any user's photo is sent there.
+- **Privacy.** The Wan models are "anonymized" on Venice: Venice passes the
+  request, without our account details, to the company that runs the model.
+  The privacy policy names Venice as a processor (`src/app/privacy/page.tsx`).
+  Counsel still has to confirm Venice's retention terms and the downstream
+  provider.
+- **Price.** Venice bills each clip from the API balance; its
+  [quote endpoint](https://docs.venice.ai/api-reference/endpoint/video/quote)
+  gives the price for a model, duration and resolution. `COSTS.video` charges
+  60 credits, about $0.46 to $0.60 depending on the pack, so check the quote
+  for `wan-2-7-enhanced-image-to-video` at `5s` and `720p` first.
+
+### Choosing a model
+
+Model ids are as Venice lists them (`GET /models?type=video`). Many cinematic
+models are SFW-only and quietly dress the subject back up.
 
 | Use | Model | Notes |
 | --- | --- | --- |
-| Image-to-video, explicit | `wan-2-7-enhanced-image-to-video` | First choice. The one trained on adult content. Put every explicit element in the source frame and leave fluids out of the prompt. |
+| Image-to-video, explicit | `wan-2-7-enhanced-image-to-video` | The default. The one trained on adult content. Put every explicit element in the source frame and leave fluids out of the prompt. |
 | Image-to-video, long or big camera moves | `wan-3-0-image-to-video` | Uncensored, 1080p, up to 30 s, start and end frames. Less tuned for close-up anatomy than 2.7. |
-| Text-to-video, explicit | `seedance-2-0-enhanced-text-to-video` | Best adult-content comprehension from text alone. |
-| Text-to-video, length | `wan-3-0-text-to-video` | Close second, up to 30 s at 1080p. |
+| Text-to-video, explicit | `seedance-2-0-enhanced-text-to-video` | Best adult-content comprehension from text alone. Not used: see below. |
+| Text-to-video, length | `wan-3-0-text-to-video` | Close second, up to 30 s at 1080p. Not used either. |
 
 Avoid `grok-imagine` (any variant: R-rated ceiling, refuses visible
 genitalia), `seedance-2-5` (won't introduce nudity from text, only works from
@@ -309,11 +363,8 @@ The workflow that gets results is the Studio's: make the keyframe on Chroma
 (`REALISTIC_MODEL=chroma`) until the pose and anatomy are right, then animate
 it with `wan-2-7-enhanced-image-to-video` and a micro-motion prompt.
 
-Whatever hosts the model, the safety order stays the same: the app's text
-screens before submitting, this worker's tagger on the source and the sampled
-frames (minor and second-person checks), and Hive on the frames before a clip
-is stored. Text-to-video would skip the moderated keyframe every clip starts
-from today, so it needs those output checks to carry it alone.
+Clips stay image-to-video: text-to-video would skip the moderated keyframe
+every clip starts from, leaving the checks on its frames to carry it alone.
 
 ## Safety on the worker
 

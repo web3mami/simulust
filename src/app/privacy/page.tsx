@@ -6,7 +6,7 @@ export const metadata: Metadata = { title: "Privacy Policy · Simulust" };
 
 export default function PrivacyPage() {
   return (
-    <DocPage title="Privacy Policy" updated="October 28, 2026">
+    <DocPage title="Privacy Policy" updated="November 2, 2026">
       <p>
         [Company legal name], [registered address], runs Simulust and is the controller of your personal data. This
         policy explains what we collect, why, who we share it with, how long we keep it, and how to use your rights.
@@ -107,7 +107,13 @@ export default function PrivacyPage() {
         </li>
         <li>Veriff: ID-based age verification, only where we use it.</li>
         <li>[AI inference provider]: generating replies and memory embeddings, under no-training and minimal-retention terms.</li>
-        <li>[GPU host]: generating images, voice notes and video on servers we control.</li>
+        <li>[GPU host]: generating images, voice notes and video, and checking every video, on servers we control.</li>
+        <li>
+          Venice: making video clips, where we use it. It receives the photo being animated and the motion for the
+          clip, never your username or account details, and passes them on the same way to the company that runs the
+          video model. We ask it to delete each clip once we have it. [Counsel: confirm Venice&apos;s retention terms
+          and name the model provider.]
+        </li>
         <li>Hive: automated image moderation.</li>
         <li>[Supabase]: database. [Cloudflare R2 / AWS S3]: media storage. [Vercel]: app hosting.</li>
         <li>Helius: Solana network access for confirming payments.</li>
